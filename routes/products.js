@@ -54,126 +54,143 @@ const authorizeRoles = (...allowedRoles) => (req, res, next) => {
 /* -------------------------------------------------------------------------- */
 /* ✅ CREATE PRODUCT */
 /* -------------------------------------------------------------------------- */
-route.post("/new", Authtoken, authorizeRoles("Super Admin", "Admin", "Manager"), (req, res) => {
-  variantUpload(req, res, async (err) => {
-    if (err) return res.status(400).json({ message: err.message });
+route.post(
+  "/new",
+  Authtoken,
+  authorizeRoles("Super Admin", "Admin", "Manager"),
+  (req, res) => {
+    variantUpload(req, res, async (err) => {
+      if (err) return res.status(400).json({ message: err.message });
 
-    const conn = await promisePool.getConnection();
-    try {
-      await conn.beginTransaction();
-
-      const files = req.files || [];
-      const {
-        title,
-        description,
-        sku,
-        category,
-        price,
-        variants,
-        group_visibility,
-        sub_cat,
-        org_id: orgIdFromFrontend,
-      } = req.body;
-
-      const requester = req.user;
-      const org_id =
-        requester.role === "Super Admin"
-          ? orgIdFromFrontend || null
-          : requester.org_id || orgIdFromFrontend || null;
-
-      if (!title || !description || !sku || !category || !price) {
-        await conn.rollback();
-        files.forEach((f) => fs.existsSync(f.path) && fs.unlinkSync(f.path));
-        return res.status(400).json({ message: "Missing required fields." });
-      }
-
-      const productId = nanoid(12);
-      const insertQuery = `
-        INSERT INTO products (id, title, description, sku, category, price, org_id${sub_cat ? ", sub_cat" : ""}, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?${sub_cat ? ", ?" : ""}, NOW())
-      `;
-      const params = [productId, title, description, sku, category, price, org_id || null];
-      if (sub_cat) params.push(sub_cat);
-
-      await conn.query(insertQuery, params);
-
-      // 🖼 Product images
-      const productImageFiles = files.filter((f) => f.fieldname === "productImages");
-      for (const file of productImageFiles) {
-        const url = `${req.protocol}://${req.get("host")}/uploads/products/${file.filename}`;
-        await conn.query("INSERT INTO product_images (product_id, url) VALUES (?, ?)", [
-          productId,
-          url,
-        ]);
-      }
-
-      // 🎨 Variants
-      let parsedVariants = [];
+      const conn = await promisePool.getConnection();
       try {
-        parsedVariants = JSON.parse(variants || "[]");
-      } catch {
-        parsedVariants = [];
-      }
+        await conn.beginTransaction();
 
-      for (let i = 0; i < parsedVariants.length; i++) {
-        const v = parsedVariants[i];
-        if (!v.sku) continue;
+        const files = req.files || [];
+        const {
+          title,
+          description,
+          sku,
+          category,
+          price, // Base product price
+          variants,
+          group_visibility,
+          sub_cat,
+          org_id: orgIdFromFrontend,
+        } = req.body;
 
-        const [variantResult] = await conn.query(
-          "INSERT INTO product_variants (product_id, color, size, sku) VALUES (?, ?, ?, ?)",
-          [productId, v.color || null, v.size || null, v.sku]
-        );
-        const variantId = variantResult.insertId;
+        const requester = req.user;
+        const org_id =
+          requester.role === "Super Admin"
+            ? orgIdFromFrontend || null
+            : requester.org_id || orgIdFromFrontend || null;
 
-        const variantFiles = files.filter((f) => f.fieldname.startsWith(`variant-${i}-`));
-        for (const file of variantFiles) {
-          const type = file.fieldname.split("-")[2];
-          const validTypes = ["front", "back", "left", "right"];
-          const imageType = validTypes.includes(type) ? type : "front";
-          const url = `${req.protocol}://${req.get("host")}/uploads/variants/${file.filename}`;
-          await conn.query(
-            "INSERT INTO variant_images (variant_id, url, type) VALUES (?, ?, ?)",
-            [variantId, url, imageType]
-          );
+        if (!title || !description || !sku || !category || !price) {
+          await conn.rollback();
+          files.forEach((f) => fs.existsSync(f.path) && fs.unlinkSync(f.path));
+          return res.status(400).json({ message: "Missing required fields." });
         }
-      }
 
-      // 👀 Group visibility
-      let parsedGV = [];
-      try {
-        parsedGV =
-          typeof group_visibility === "string"
-            ? JSON.parse(group_visibility)
-            : group_visibility;
-      } catch {
-        parsedGV = [];
-      }
+        // ✅ Create Product
+        const productId = nanoid(12);
+        const insertQuery = `
+          INSERT INTO products 
+          (id, title, description, sku, category, price, org_id${sub_cat ? ", sub_cat" : ""}, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?${sub_cat ? ", ?" : ""}, NOW())
+        `;
+        const params = [productId, title, description, sku, category, price, org_id || null];
+        if (sub_cat) params.push(sub_cat);
 
-      if (Array.isArray(parsedGV) && parsedGV.length) {
-        for (const gv of parsedGV) {
-          await conn.query(
-            "INSERT INTO group_product_visibility (group_id, product_id, is_visible, created_at, updated_at) VALUES (?, ?, ?, NOW(), NOW())",
-            [gv.group_id, productId, gv.is_visible ?? true]
-          );
+        await conn.query(insertQuery, params);
+
+        // 🖼 Product Images
+        const productImageFiles = files.filter((f) => f.fieldname === "productImages");
+        for (const file of productImageFiles) {
+          const url = `${req.protocol}://${req.get("host")}/uploads/products/${file.filename}`;
+          await conn.query("INSERT INTO product_images (product_id, url) VALUES (?, ?)", [
+            productId,
+            url,
+          ]);
         }
+
+        // 🎨 Variants with individual prices
+        let parsedVariants = [];
+        try {
+          parsedVariants = JSON.parse(variants || "[]");
+        } catch {
+          parsedVariants = [];
+        }
+
+        for (let i = 0; i < parsedVariants.length; i++) {
+          const v = parsedVariants[i];
+          if (!v.sku) continue;
+
+          // ✅ Each variant can have its own price
+          const variantPrice = parseFloat(v.price) || parseFloat(price) || 0.0;
+
+          const [variantResult] = await conn.query(
+            "INSERT INTO product_variants (product_id, color, size, sku, price) VALUES (?, ?, ?, ?, ?)",
+            [productId, v.color || null, v.size || null, v.sku, variantPrice]
+          );
+
+          const variantId = variantResult.insertId;
+
+          // 🖼 Variant Images
+          const variantFiles = files.filter((f) => f.fieldname.startsWith(`variant-${i}-`));
+          for (const file of variantFiles) {
+            const type = file.fieldname.split("-")[2];
+            const validTypes = ["front", "back", "left", "right"];
+            const imageType = validTypes.includes(type) ? type : "front";
+            const url = `${req.protocol}://${req.get("host")}/uploads/variants/${file.filename}`;
+            await conn.query(
+              "INSERT INTO variant_images (variant_id, url, type) VALUES (?, ?, ?)",
+              [variantId, url, imageType]
+            );
+          }
+        }
+
+        // 👀 Group Visibility
+        let parsedGV = [];
+        try {
+          parsedGV =
+            typeof group_visibility === "string"
+              ? JSON.parse(group_visibility)
+              : group_visibility;
+        } catch {
+          parsedGV = [];
+        }
+
+        if (Array.isArray(parsedGV) && parsedGV.length) {
+          for (const gv of parsedGV) {
+            await conn.query(
+              `INSERT INTO group_product_visibility 
+               (group_id, product_id, is_visible, created_at, updated_at)
+               VALUES (?, ?, ?, NOW(), NOW())`,
+              [gv.group_id, productId, gv.is_visible ?? true]
+            );
+          }
+        }
+
+        await conn.commit();
+        res.status(201).json({ message: "✅ Product created successfully.", productId });
+      } catch (e) {
+        if (conn) await conn.rollback();
+        (req.files || []).forEach((f) => fs.existsSync(f.path) && fs.unlinkSync(f.path));
+
+        if (e.code === "ER_DUP_ENTRY")
+          return res.status(409).json({
+            message: "A product or variant with this SKU already exists.",
+          });
+
+        console.error("❌ Error creating product:", e);
+        res.status(500).json({ message: "Internal Server Error", error: e.message });
+      } finally {
+        if (conn) conn.release();
       }
+    });
+  }
+);
 
-      await conn.commit();
-      res.status(201).json({ message: "Product created successfully", productId });
-    } catch (e) {
-      if (conn) await conn.rollback();
-      (req.files || []).forEach((f) => fs.existsSync(f.path) && fs.unlinkSync(f.path));
-
-      if (e.code === "ER_DUP_ENTRY")
-        return res.status(409).json({ message: "A product or variant with this SKU already exists." });
-
-      console.error("❌ Error creating product:", e);
-      res.status(500).json({ message: "Internal Server Error", error: e.message });
-    } finally {
-      if (conn) conn.release();
-    }
-  });
-});
 
 /* -------------------------------------------------------------------------- */
 /* ✅ GET ALL PRODUCTS (with org filtering) */
@@ -185,27 +202,36 @@ route.get("/all-products", Authtoken, async (req, res) => {
     const where = [];
     const params = [];
 
-    if (!requester) where.push("org_id IS NULL");
-    else if (requester.role !== "Super Admin") {
+    // 🔐 Organization-level filter
+    if (!requester) {
+      where.push("org_id IS NULL");
+    } else if (requester.role !== "Super Admin") {
       if (requester.org_id) {
         where.push("(org_id IS NULL OR org_id = ?)");
         params.push(requester.org_id);
-      } else where.push("org_id IS NULL");
+      } else {
+        where.push("org_id IS NULL");
+      }
     }
 
+    // 🔍 Search filters
     if (title) {
       where.push("title LIKE ?");
       params.push(`%${title}%`);
     }
+
     if (sku) {
       where.push("sku LIKE ?");
       params.push(`%${sku}%`);
     }
+
     if (typeof isActive !== "undefined") {
       where.push(isActive === "true" || isActive === "1" ? "isActive=TRUE" : "isActive=FALSE");
     }
 
     const whereSql = where.length ? "WHERE " + where.join(" AND ") : "";
+
+    // 🧾 Fetch products
     const [products] = await promisePool.query(
       `SELECT * FROM products ${whereSql} ORDER BY created_at DESC`,
       params
@@ -215,23 +241,31 @@ route.get("/all-products", Authtoken, async (req, res) => {
       return res.status(404).json({ message: "No products found" });
 
     const productIds = products.map((p) => p.id);
+
+    // 🧩 Fetch all variants (including price)
     const [variants] = await promisePool.query(
-      "SELECT * FROM product_variants WHERE product_id IN (?)",
+      `SELECT id, product_id, color, size, sku, price 
+       FROM product_variants 
+       WHERE product_id IN (?)`,
       [productIds.length ? productIds : [0]]
     );
+
+    // 🖼 Fetch variant images
     const variantIds = variants.map((v) => v.id);
     const [variantImages] = variantIds.length
       ? await promisePool.query(
-          "SELECT * FROM variant_images WHERE variant_id IN (?)",
+          "SELECT variant_id, url, type FROM variant_images WHERE variant_id IN (?)",
           [variantIds]
         )
       : [[]];
 
+    // 🧩 Combine variants + their images
     const variantsWithImages = variants.map((v) => ({
       ...v,
       images: variantImages.filter((img) => img.variant_id === v.id),
     }));
 
+    // 🧱 Attach variants to their products
     const result = products.map((p) => ({
       ...p,
       variants: variantsWithImages.filter((v) => v.product_id === p.id),
@@ -243,6 +277,7 @@ route.get("/all-products", Authtoken, async (req, res) => {
     res.status(500).json({ message: "Internal Server Error", error: e.message });
   }
 });
+
 
 /* -------------------------------------------------------------------------- */
 /* ✅ PRODUCTS SUMMARY */
@@ -304,21 +339,27 @@ route.get("/products-summary", Authtoken, async (req, res) => {
 route.get("/:id", Authtoken, async (req, res) => {
   try {
     const { id } = req.params;
+
+    // 🧩 Get product
     const [products] = await promisePool.query("SELECT * FROM products WHERE id = ?", [id]);
-
-    if (!products.length) return res.status(404).json({ message: "Product not found" });
-
+    if (!products.length) {
+      return res.status(404).json({ message: "Product not found" });
+    }
     const product = products[0];
+
+    // 🖼 Product images
     const [productImages] = await promisePool.query(
       "SELECT id, url FROM product_images WHERE product_id = ?",
       [id]
     );
 
+    // 🎨 Variants (include price!)
     const [variants] = await promisePool.query(
-      "SELECT * FROM product_variants WHERE product_id = ?",
+      "SELECT id, product_id, color, size, sku, price FROM product_variants WHERE product_id = ?",
       [id]
     );
 
+    // 🖼 Variant images
     let variantsWithImages = [];
     if (variants.length) {
       const variantIds = variants.map((v) => v.id);
@@ -332,11 +373,13 @@ route.get("/:id", Authtoken, async (req, res) => {
       }));
     }
 
+    // 👀 Group visibility
     const [groupVisibility] = await promisePool.query(
       "SELECT group_id, is_visible FROM group_product_visibility WHERE product_id = ?",
       [id]
     );
 
+    // ✅ Response
     res.status(200).json({
       product: {
         ...product,
