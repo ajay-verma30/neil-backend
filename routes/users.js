@@ -936,6 +936,51 @@ route.get(
 );
 
 
+//Update user status
+route.patch(
+  "/user/:id/status",
+  Authtoken,
+  authorizeRoles("Super Admin", "Admin", "Manager"),
+  async (req, res) => {
+    const { id } = req.params;
+    const { isActive } = req.body;
+    const requester = req.user;
+    const isSA = requester.role === "Super Admin";
+
+    if (isActive === undefined) {
+      return res.status(400).json({ success: false, message: "isActive field required." });
+    }
+
+    try {
+      const [userRows] = await pool.query("SELECT org_id, role FROM users WHERE id = ?", [id]);
+      if (userRows.length === 0)
+        return res.status(404).json({ success: false, message: "User not found." });
+
+      const user = userRows[0];
+
+      // Restrict for non-Super Admins
+      if (!isSA && requester.org_id !== user.org_id) {
+        return res.status(403).json({
+          success: false,
+          message: "You are not authorized to modify this user's status.",
+        });
+      }
+
+      await pool.query("UPDATE users SET isActive = ? WHERE id = ?", [!!isActive, id]);
+
+      return res.status(200).json({
+        success: true,
+        message: `User ${isActive ? "activated" : "deactivated"} successfully.`,
+        userId: id,
+        isActive: !!isActive,
+      });
+    } catch (error) {
+      console.error("❌ Error updating status:", error);
+      return res.status(500).json({ success: false, message: "Internal Server Error", error: error.message });
+    }
+  }
+);
+
 
 /* -----------------------------------
   PATCH (UPDATE) USER (Org-specific for Admin/Manager)
