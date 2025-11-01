@@ -952,7 +952,7 @@ route.patch(
     }
 
     try {
-      const [userRows] = await pool.query("SELECT org_id, role FROM users WHERE id = ?", [id]);
+      const [userRows] = await pool.query("SELECT * FROM users WHERE id = ?", [id]);
       if (userRows.length === 0)
         return res.status(404).json({ success: false, message: "User not found." });
 
@@ -968,18 +968,29 @@ route.patch(
 
       await pool.query("UPDATE users SET isActive = ? WHERE id = ?", [!!isActive, id]);
 
+      // Fetch updated user
+      const [updatedUser] = await pool.query(
+        `SELECT id, f_name, l_name, email, contact, isActive, role, org_id, created_at
+         FROM users WHERE id = ?`,
+        [id]
+      );
+
       return res.status(200).json({
         success: true,
         message: `User ${isActive ? "activated" : "deactivated"} successfully.`,
-        userId: id,
-        isActive: !!isActive,
+        user: updatedUser[0],
       });
     } catch (error) {
       console.error("❌ Error updating status:", error);
-      return res.status(500).json({ success: false, message: "Internal Server Error", error: error.message });
+      return res.status(500).json({
+        success: false,
+        message: "Internal Server Error",
+        error: error.message,
+      });
     }
   }
 );
+
 
 
 /* -----------------------------------
