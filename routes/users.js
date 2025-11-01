@@ -694,44 +694,33 @@ route.get(
   async (req, res) => {
     try {
       const requester = req.user;
-      const { role, group, isActive, name } = req.query;
+      const { role, isActive, name } = req.query;
 
       const whereClauses = [];
       const params = [];
 
-      if (!isSuperAdmin(req)) {
+      // 🧩 Restrict org scope only for non–super admins
+      if (requester.role !== "Super Admin") {
         whereClauses.push("u.org_id = ?");
         params.push(requester.org_id);
       }
 
-      if (isActive !== undefined && isActive !== "") {
+      // 🟢 Filter by active/inactive
+      if (isActive && isActive !== "") {
         whereClauses.push("u.isActive = ?");
         params.push(isActive === "true" || isActive === "1");
       }
 
+      // 🟢 Filter by role(s)
       if (role) {
-        const roles = role
-          .split(",")
-          .map((r) => r.trim())
-          .filter(Boolean);
-
+        const roles = role.split(",").map((r) => r.trim()).filter(Boolean);
         if (roles.length > 0) {
-          if (!isSuperAdmin(req)) {
-            const allowedRoles = roles.filter((r) => r !== "Super Admin");
-            if (allowedRoles.length === 0) {
-              return res.status(200).json({ users: [] });
-            }
-            whereClauses.push(
-              `u.role IN (${allowedRoles.map(() => "?").join(",")})`
-            );
-            params.push(...allowedRoles);
-          } else {
-            whereClauses.push(`u.role IN (${roles.map(() => "?").join(",")})`);
-            params.push(...roles);
-          }
+          whereClauses.push(`u.role IN (${roles.map(() => "?").join(",")})`);
+          params.push(...roles);
         }
       }
 
+      // 🟢 Search by name
       if (name && name.trim() !== "") {
         const like = `%${name.trim()}%`;
         whereClauses.push(
@@ -739,9 +728,12 @@ route.get(
         );
         params.push(like, like, like);
       }
+
+      // 🧩 Build final query
       const whereSql = whereClauses.length
         ? `WHERE ${whereClauses.join(" AND ")}`
         : "";
+
       const sql = `
         SELECT 
           u.id,
@@ -753,7 +745,7 @@ route.get(
           u.created_at,
           u.role,
           u.org_id,
-          o.title AS org_name,
+          COALESCE(o.title, '—') AS org_name,
           GROUP_CONCAT(DISTINCT g.title ORDER BY g.title SEPARATOR ', ') AS user_groups
         FROM users u
         LEFT JOIN user_group ug ON ug.user_id = u.id
@@ -766,16 +758,22 @@ route.get(
 
       const [users] = await pool.query(sql, params);
 
-      return res.status(200).json({ users });
+      return res.status(200).json({
+        success: true,
+        total: users.length,
+        users,
+      });
     } catch (error) {
       console.error("❌ Error in /all-users:", error);
       return res.status(500).json({
+        success: false,
         message: "Internal Server Error",
         error: error.message,
       });
     }
   }
 );
+
 
 
 /**
