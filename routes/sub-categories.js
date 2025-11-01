@@ -14,34 +14,41 @@ const getCurrentMysqlDatetime = () =>
 /* 🟢 CREATE SUB-CATEGORY */
 /* -------------------------------------------------------------------------- */
 route.post("/new", Authtoken, async (req, res) => {
-  const conn = await promiseConn.getConnection(); // ✅ get connection from pool
+  const conn = await promiseConn.getConnection();
   try {
     const createdAt = getCurrentMysqlDatetime();
     const { title, category, org_id } = req.body;
     const user = req.user;
-
     if (!title || !category) {
       return res.status(400).json({
         message: "Both 'title' and 'category' are required.",
       });
     }
-
-    // 🧠 Role-based org_id logic
     let orgIdValue = null;
     if (user.role === "Super Admin") {
       orgIdValue = org_id || null;
     } else {
       if (!org_id)
-        return res
-          .status(400)
-          .json({ message: "'org_id' is required for non–Super Admin users." });
-      orgIdValue = org_id;
-    }
+        return res.status(400).json({
+          message: "'org_id' is required for non–Super Admin users.",
+        });
+      if (Number(org_id) !== Number(user.org_id))
+        return res.status(403).json({
+          message: "You are not authorized to create sub-categories for another organization.",
+        });
 
-    // 🔍 Duplicate check (org-based)
+      orgIdValue = user.org_id;
+    }
     const [existing] = await conn.query(
-      "SELECT id FROM sub_categories WHERE title=? AND category=? AND (org_id=? OR org_id IS NULL)",
-      [title, category, orgIdValue]
+      `SELECT id 
+       FROM sub_categories 
+       WHERE title = ? 
+         AND category = ? 
+         AND (
+           (org_id IS NULL AND ? IS NULL) OR 
+           org_id = ?
+         )`,
+      [title, category, orgIdValue, orgIdValue]
     );
 
     if (existing.length > 0) {
@@ -49,8 +56,6 @@ route.post("/new", Authtoken, async (req, res) => {
         message: `Sub-category '${title}' already exists in '${category}'.`,
       });
     }
-
-    // 🧩 Insert new sub-category
     const [insertResult] = await conn.query(
       "INSERT INTO sub_categories (title, category, org_id, created_at) VALUES (?, ?, ?, ?)",
       [title, category, orgIdValue, createdAt]
@@ -60,19 +65,26 @@ route.post("/new", Authtoken, async (req, res) => {
       return res.status(400).json({ message: "Unable to add sub-category." });
     }
 
-    return res.status(201).json({
+    res.status(201).json({
       message: "Sub-category added successfully.",
-      data: { id: insertResult.insertId, title, category, org_id: orgIdValue },
+      data: {
+        id: insertResult.insertId,
+        title,
+        category,
+        org_id: orgIdValue,
+      },
     });
   } catch (err) {
     console.error("❌ Error in POST /subcategories/new:", err);
-    res
-      .status(500)
-      .json({ message: "Internal Server Error", error: err.message });
+    res.status(500).json({
+      message: "Internal Server Error",
+      error: err.message,
+    });
   } finally {
-    conn.release(); // ✅ release connection back to pool
+    conn.release();
   }
 });
+
 
 /* -------------------------------------------------------------------------- */
 /* 📋 GET ALL SUB-CATEGORIES */
