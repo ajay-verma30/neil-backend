@@ -944,22 +944,39 @@ route.patch(
   "/:id",
   Authtoken,
   authorizeRoles("Super Admin", "Admin", "Manager"),
-  checkOrgAccess,
   async (req, res) => {
     const { id: userId } = req.params;
     const requester = req.user;
     const { isActive, ...updateFields } = req.body;
-    const isSA = isSuperAdmin(requester);
+    const isSA = requester.role === "Super Admin";
 
     try {
       if (!userId) {
         return res.status(400).json({ message: "User ID is required." });
       }
 
+      // 🔍 If not Super Admin, ensure user belongs to the same org
+      if (!isSA) {
+        const [targetRows] = await pool.query(
+          "SELECT org_id FROM users WHERE id = ?",
+          [userId]
+        );
+        if (targetRows.length === 0) {
+          return res.status(404).json({ message: "User not found." });
+        }
+        const targetOrg = targetRows[0].org_id;
+        if (targetOrg !== requester.org_id) {
+          return res
+            .status(403)
+            .json({ message: "Not authorized to modify this user." });
+        }
+      }
+
+      // 🧩 Build update fields
       const setClauses = [];
       const params = [];
 
-      // Non-Super Admins cannot change sensitive fields
+      // Non-Super Admins cannot update sensitive fields
       if (!isSA) {
         const restrictedFields = ["role", "org_id", "hashpassword"];
         for (const field of restrictedFields) {
@@ -971,15 +988,16 @@ route.patch(
         }
       }
 
+      // ✅ Handle isActive toggle
       if (isActive !== undefined) {
         setClauses.push("isActive = ?");
         params.push(!!isActive);
       }
 
+      // ✅ Handle other editable fields
       for (const key in updateFields) {
         if (
-          // Super Admins can update anything, others are restricted
-          isSA ||
+          isSA || // Super Admin can edit anything
           ["f_name", "l_name", "email", "contact"].includes(key)
         ) {
           setClauses.push(`${key} = ?`);
@@ -993,23 +1011,24 @@ route.patch(
           .json({ message: "No valid fields provided for update." });
       }
 
+      // ✅ Execute update
       params.push(userId);
-      const [result] = await pool.query( // Use pool.query
+      const [result] = await pool.query(
         `UPDATE users SET ${setClauses.join(", ")} WHERE id = ?`,
         params
       );
 
       if (result.affectedRows === 0) {
-        return res.status(404).json({
-          message: "User not found or you are not authorized to update it.",
-        });
+        return res
+          .status(404)
+          .json({ message: "User not found or update not applied." });
       }
 
       res.status(200).json({
         success: true,
         message: "User updated successfully.",
         userId,
-        updatedFields: { ...req.body },
+        updatedFields: req.body,
       });
     } catch (error) {
       console.error("❌ Error updating user:", error);
@@ -1023,6 +1042,7 @@ route.patch(
 );
 
 
+
 // update user groups.
 route.patch(
   "/user/:id",
@@ -1031,20 +1051,26 @@ route.patch(
   async (req, res) => {
     let connection;
     try {
-      connection = await pool.getConnection(); // Acquire connection for transaction
+      connection = await pool.getConnection();
       const { id } = req.params;
       const { group_ids, remove_group_ids } = req.body;
       const requester = req.user;
+      const isSA = requester.role === "Super Admin";
 
+      // 🧩 Fetch target user org
       const [targetUser] = await connection.query(
         "SELECT org_id FROM users WHERE id = ?",
         [id]
       );
-      if (targetUser.length === 0)
-        return res.status(404).json({ message: "User not found." });
-      const userOrgId = targetUser[0].org_id;
 
-      if (requester.role !== "Super Admin" && requester.org_id !== userOrgId) {
+      if (targetUser.length === 0) {
+        return res.status(404).json({ message: "User not found." });
+      }
+
+      const targetOrgId = targetUser[0].org_id;
+
+      // 🔒 Restrict non-super-admins
+      if (!isSA && requester.org_id !== targetOrgId) {
         return res.status(403).json({
           message:
             "You are not authorized to modify users from another organization.",
@@ -1053,18 +1079,16 @@ route.patch(
 
       await connection.beginTransaction();
 
-      // --- Add Groups ---
-      if (group_ids && Array.isArray(group_ids)) {
-        // Fetch existing group links to prevent duplicates
-        const [currentGroups] = await connection.query(
+      // ✅ Add Groups
+      if (group_ids && Array.isArray(group_ids) && group_ids.length > 0) {
+        const [existingLinks] = await connection.query(
           "SELECT group_id FROM user_group WHERE user_id = ?",
           [id]
         );
-        const currentGroupIds = currentGroups.map((g) => g.group_id);
+        const existingGroupIds = existingLinks.map((g) => g.group_id);
 
         for (const groupId of group_ids) {
-          // Check if link already exists before inserting
-          if (!currentGroupIds.includes(groupId)) {
+          if (!existingGroupIds.includes(groupId)) {
             await connection.query(
               "INSERT INTO user_group (id, user_id, group_id, added_on) VALUES (?, ?, ?, NOW())",
               [nanoid(10), id, groupId]
@@ -1073,13 +1097,12 @@ route.patch(
         }
       }
 
-      // --- Remove Groups ---
+      // ✅ Remove Groups
       if (
         remove_group_ids &&
         Array.isArray(remove_group_ids) &&
         remove_group_ids.length > 0
       ) {
-        // Note: MySQL supports IN (?) for arrays of values
         await connection.query(
           "DELETE FROM user_group WHERE user_id = ? AND group_id IN (?)",
           [id, remove_group_ids]
@@ -1088,20 +1111,23 @@ route.patch(
 
       await connection.commit();
 
-      // Fetch and return the updated user details
+      // 🔄 Fetch updated user info + groups
       const [updatedUser] = await connection.query(
-        "SELECT * FROM users WHERE id = ?",
+        "SELECT id, f_name, l_name, email, contact, role, org_id, isActive FROM users WHERE id = ?",
         [id]
       );
       const [assignedGroups] = await connection.query(
-        `SELECT g.id, g.title
+        `
+        SELECT g.id, g.title
         FROM user_groups g
         JOIN user_group ug ON ug.group_id = g.id
-        WHERE ug.user_id = ?`,
+        WHERE ug.user_id = ?
+        `,
         [id]
       );
-      
+
       return res.status(200).json({
+        success: true,
         message: "User groups updated successfully.",
         user: {
           ...updatedUser[0],
@@ -1112,14 +1138,16 @@ route.patch(
       if (connection) await connection.rollback();
       console.error("❌ Error updating user groups:", error);
       return res.status(500).json({
+        success: false,
         message: "Internal Server Error",
         error: error.message,
       });
     } finally {
-      if (connection) connection.release(); // Ensure connection is released
+      if (connection) connection.release();
     }
   }
 );
+
 
 // remove group
 route.patch(
@@ -1128,33 +1156,146 @@ route.patch(
   authorizeRoles("Super Admin", "Admin", "Manager"),
   async (req, res) => {
     try {
-      const { id } = req.params;
+      const { id: userId } = req.params;
       const { group_id } = req.body;
+      const requester = req.user;
+      const isSA = requester.role === "Super Admin";
 
-      if (!group_id)
-        return res.status(400).json({ message: "group_id is required" });
+      if (!group_id) {
+        return res.status(400).json({ success: false, message: "group_id is required." });
+      }
 
-      // Use pool.query for a simple, single operation
+      // 🔍 Fetch user and their org
+      const [userRows] = await pool.query("SELECT org_id FROM users WHERE id = ?", [userId]);
+      if (userRows.length === 0) {
+        return res.status(404).json({ success: false, message: "User not found." });
+      }
+      const targetOrgId = userRows[0].org_id;
+
+      // 🔍 Fetch group and its org
+      const [groupRows] = await pool.query("SELECT org_id FROM user_groups WHERE id = ?", [group_id]);
+      if (groupRows.length === 0) {
+        return res.status(404).json({ success: false, message: "Group not found." });
+      }
+      const groupOrgId = groupRows[0].org_id;
+
+      // 🚫 Restrict cross-org access for non-Super Admins
+      if (!isSA && (requester.org_id !== targetOrgId || requester.org_id !== groupOrgId)) {
+        return res.status(403).json({
+          success: false,
+          message: "You are not authorized to modify users or groups from another organization.",
+        });
+      }
+
+      // ✅ Perform deletion
       const [result] = await pool.query(
         "DELETE FROM user_group WHERE user_id = ? AND group_id = ?",
-        [id, group_id]
+        [userId, group_id]
       );
 
       if (result.affectedRows === 0) {
-        return res
-          .status(400)
-          .json({ message: "Unable to remove group. Try Again!" });
-      } else {
-        return res.status(200).json({ message: "Group removed successfully" });
+        return res.status(400).json({
+          success: false,
+          message: "No such user-group link found or already removed.",
+        });
       }
+
+      return res.status(200).json({
+        success: true,
+        message: "Group removed successfully from user.",
+      });
     } catch (error) {
       console.error("❌ Error removing user group:", error);
       return res.status(500).json({
+        success: false,
         message: "Internal Server Error",
         error: error.message,
       });
     }
   }
 );
+
+
+route.delete(
+  "/:id",
+  Authtoken,
+  authorizeRoles("Super Admin", "Admin", "Manager"),
+  async (req, res) => {
+    let conn;
+    try {
+      const { id: userId } = req.params;
+      const requester = req.user;
+      const isSA = requester.role === "Super Admin";
+
+      if (!userId) {
+        return res.status(400).json({ success: false, message: "User ID is required." });
+      }
+
+      // 🚫 Prevent self-deletion
+      if (requester.id === userId) {
+        return res.status(403).json({ success: false, message: "You cannot delete your own account." });
+      }
+
+      conn = await pool.getConnection();
+      await conn.beginTransaction();
+
+      // 🔍 Fetch target user
+      const [userRows] = await conn.query("SELECT org_id, role FROM users WHERE id = ?", [userId]);
+      if (userRows.length === 0) {
+        await conn.rollback();
+        return res.status(404).json({ success: false, message: "User not found." });
+      }
+
+      const targetUser = userRows[0];
+
+      // 🚫 Restrict non-Super Admins from deleting outside their org or higher roles
+      if (!isSA) {
+        if (targetUser.org_id !== requester.org_id) {
+          await conn.rollback();
+          return res.status(403).json({
+            success: false,
+            message: "You are not authorized to delete users from another organization.",
+          });
+        }
+        if (targetUser.role === "Super Admin") {
+          await conn.rollback();
+          return res.status(403).json({
+            success: false,
+            message: "You are not authorized to delete a Super Admin.",
+          });
+        }
+      }
+
+      // 🧹 Clean up user-group mappings first
+      await conn.query("DELETE FROM user_group WHERE user_id = ?", [userId]);
+
+      // 🗑️ Delete the user
+      const [deleteResult] = await conn.query("DELETE FROM users WHERE id = ?", [userId]);
+      if (deleteResult.affectedRows === 0) {
+        await conn.rollback();
+        return res.status(404).json({ success: false, message: "User could not be deleted." });
+      }
+
+      await conn.commit();
+
+      return res.status(200).json({
+        success: true,
+        message: "User deleted successfully.",
+        deletedUserId: userId,
+      });
+    } catch (error) {
+      if (conn) await conn.rollback();
+      console.error("❌ Error deleting user:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Internal Server Error",
+        error: error.message,
+      });
+    } finally {
+      if (conn) conn.release();
+    }
+  }
+);
+
 
 module.exports = route;
