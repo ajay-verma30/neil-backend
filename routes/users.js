@@ -33,7 +33,7 @@ const loginLimiter = rateLimit({
 });
 
 // 🧠 Helper Functions
-const isSuperAdmin = (req) => req.user?.role === "Super Admin";
+const isSuperAdmin = (user) => user && user.role === "Super Admin";
 const authorizeRoles = (...roles) => (req, res, next) =>
   !req.user || !roles.includes(req.user.role)
     ? res.status(403).json({ message: "Access denied" })
@@ -880,15 +880,22 @@ route.get(
       }
       let query = `
         SELECT 
-          u.id, u.f_name, u.l_name, u.email, u.contact, u.isActive, u.created_at,
-          u.role, u.org_id, o.title AS org_name
+          u.id,
+          u.f_name,
+          u.l_name,
+          u.email,
+          u.contact,
+          u.isActive,
+          u.created_at,
+          u.role,
+          u.org_id,
+          o.title AS org_name
         FROM users u
         LEFT JOIN organizations o ON u.org_id = o.id
         WHERE u.id = ?
       `;
-
       const params = [userId];
-      if (!isSuperAdmin(requester)) {
+      if (!isSuperAdmin(requester) && requester.org_id) {
         query += " AND u.org_id = ?";
         params.push(requester.org_id);
       }
@@ -901,6 +908,7 @@ route.get(
             : "User not found or you are not authorized for this organization.",
         });
       }
+
       const user = userRows[0];
       const [groups] = await pool.query(
         `
@@ -911,7 +919,6 @@ route.get(
         `,
         [userId]
       );
-
       return res.status(200).json({
         success: true,
         user: {
@@ -920,15 +927,16 @@ route.get(
         },
       });
     } catch (error) {
-      console.error("❌ Error fetching single user:", error);
+      console.error("❌ Error fetching user:", error);
       return res.status(500).json({
         success: false,
-        message: "Internal Server Error",
+        message: "Internal Server Error while fetching user.",
         error: error.message,
       });
     }
   }
 );
+
 
 
 /* -----------------------------------
