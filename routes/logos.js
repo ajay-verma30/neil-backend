@@ -2,11 +2,11 @@ const express = require("express");
 const route = express.Router();
 const { nanoid } = require("nanoid");
 const fs = require("fs");
-const path = require("path"); // <-- ADDED: Missing path import
-const streamifier = require("streamifier"); // <-- ADDED: Missing streamifier import
+const path = require("path"); 
+const streamifier = require("streamifier"); 
 const multer = require("multer");
 const mysqlconnect = require("../db/conn");
-const cloudinary = require("./cloudinary"); // Assuming this is configured elsewhere
+const cloudinary = require("./cloudinary"); 
 const Authtoken = require("../Auth/tokenAuthentication");
 
 const pool = mysqlconnect();
@@ -24,15 +24,10 @@ const authorizeRoles = (...allowedRoles) => {
   };
 };
 
-// ❌ REMOVED: Local directory creation, as multer is set to memoryStorage
-// const uploadDir = path.join(__dirname, "../uploads/logos");
-// if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
-
-
 // ✅ Multer memory storage (no local files)
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 }, // Max 5MB per file
+  limits: { fileSize: 5 * 1024 * 1024 }, 
   fileFilter: (req, file, cb) => {
     const isSvg =
       file.mimetype === "image/svg+xml" &&
@@ -44,7 +39,7 @@ const upload = multer({
     if (isSvg || isPng) cb(null, true);
     else cb(new Error("Only SVG and PNG files are allowed!"), false);
   },
-}).any();
+});
 
 
 const uploadToCloudinary = (buffer, folder) =>
