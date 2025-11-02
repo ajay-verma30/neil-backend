@@ -1,18 +1,20 @@
 const express = require("express");
 const route = express.Router();
 const { nanoid } = require("nanoid");
-const path = require("path");
 const fs = require("fs");
+const path = require("path"); // <-- ADDED: Missing path import
+const streamifier = require("streamifier"); // <-- ADDED: Missing streamifier import
 const multer = require("multer");
 const mysqlconnect = require("../db/conn");
+const cloudinary = require("./cloudinary"); // Assuming this is configured elsewhere
 const Authtoken = require("../Auth/tokenAuthentication");
 
 const pool = mysqlconnect();
 const promiseConn = pool.promise();
 
-// =====================
-// Authorization
-// =====================
+const getCurrentMysqlDatetime = () =>
+  new Date().toISOString().slice(0, 19).replace("T", " ");
+
 const authorizeRoles = (...allowedRoles) => {
   return (req, res, next) => {
     if (!req.user || !allowedRoles.includes(req.user.role)) {
@@ -22,28 +24,65 @@ const authorizeRoles = (...allowedRoles) => {
   };
 };
 
-// =====================
-// Multer configuration
-// =====================
-const uploadDir = path.join(__dirname, "../uploads/logos");
-if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+// ❌ REMOVED: Local directory creation, as multer is set to memoryStorage
+// const uploadDir = path.join(__dirname, "../uploads/logos");
+// if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, uploadDir),
-  filename: (req, file, cb) => {
-    const uniqueName = `${Date.now()}-${nanoid(8)}.svg`;
-    cb(null, uniqueName);
+
+// ✅ Multer memory storage (no local files)
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 }, // Max 5MB per file
+  fileFilter: (req, file, cb) => {
+    const isSvg =
+      file.mimetype === "image/svg+xml" &&
+      file.originalname.toLowerCase().endsWith(".svg");
+    const isPng =
+      file.mimetype === "image/png" &&
+      file.originalname.toLowerCase().endsWith(".png");
+
+    if (isSvg || isPng) cb(null, true);
+    else cb(new Error("Only SVG and PNG files are allowed!"), false);
   },
-});
+}).any();
 
-const fileFilter = (req, file, cb) => {
-  const isSvg = file.mimetype === "image/svg+xml" && path.extname(file.originalname).toLowerCase() === ".svg";
-  if (isSvg) cb(null, true);
-  else cb(new Error("Only SVG files are allowed!"), false);
+
+const uploadToCloudinary = (buffer, folder) =>
+  new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      { folder },
+      (error, result) => {
+        if (error) reject(error);
+        else resolve(result.secure_url);
+      }
+    );
+    streamifier.createReadStream(buffer).pipe(stream);
+  });
+
+
+  // Add this helper function to your file
+const getCloudinaryPublicId = (url) => {
+  // Cloudinary URL format: .../v[version]/folder/public_id.png
+  // This extracts 'folder/public_id'
+  const parts = url.split('/');
+  const folderAndId = parts.slice(parts.lastIndexOf('upload') + 2).join('/').split('.')[0];
+  return folderAndId;
 };
 
-const upload = multer({ storage, fileFilter });
+const deleteFromCloudinary = async (url) => {
+  if (!url || !url.includes('cloudinary.com')) return;
 
+  const publicId = getCloudinaryPublicId(url);
+  try {
+    const result = await cloudinary.uploader.destroy(publicId);
+    if (result.result !== 'ok' && result.result !== 'not found') {
+      console.warn(`Cloudinary deletion warning for ${publicId}:`, result);
+    }
+  } catch (error) {
+    console.error(`Error deleting file from Cloudinary: ${publicId}`, error);
+    // You might choose to throw the error or just log it, as the DB transaction has already committed.
+  }
+};
 // =====================
 // CREATE Logo
 // =====================
@@ -53,7 +92,7 @@ route.post(
   authorizeRoles("Super Admin", "Admin", "Manager"),
   upload.array("logos"),
   async (req, res) => {
-    let uploadedFiles = [];
+    // ❌ REMOVED: let uploadedFiles = [];
     try {
       const { title, colors, placements, org_id } = req.body;
 
@@ -61,9 +100,10 @@ route.post(
         return res.status(400).json({ message: "SVG logo files are required." });
       if (!title || !colors)
         return res.status(400).json({ message: "Title and colors are required." });
+
       let finalOrgId = null;
       if (req.user.role === "Super Admin") {
-        finalOrgId = org_id || null; 
+        finalOrgId = org_id || null;
       } else {
         if (org_id && org_id !== req.user.org_id) {
           return res.status(403).json({
@@ -73,7 +113,12 @@ route.post(
         finalOrgId = req.user.org_id;
       }
 
-      uploadedFiles = req.files.map(f => path.join(uploadDir, f.filename));
+      // 🛑 FIXED: Using uploadToCloudinary instead of local file paths
+      const uploadPromises = req.files.map(file =>
+        uploadToCloudinary(file.buffer, "logos")
+      );
+      const cloudinaryUrls = await Promise.all(uploadPromises);
+
       const logoId = nanoid(13);
       const createdAt = new Date().toISOString().slice(0, 19).replace("T", " ");
 
@@ -89,7 +134,9 @@ route.post(
         [logoId, title, finalOrgId, createdAt]
       );
       for (let i = 0; i < req.files.length; i++) {
-        const fileUrl = `${req.protocol}://${req.get("host")}/uploads/logos/${req.files[i].filename}`;
+        // 🛑 FIXED: Use the Cloudinary URL
+        const fileUrl = cloudinaryUrls[i]; 
+        
         const [variantResult] = await promiseConn.execute(
           "INSERT INTO logo_variants (logo_id, color, url, created_at) VALUES (?, ?, ?, ?)",
           [logoId, colorArray[i], fileUrl, createdAt]
@@ -137,7 +184,7 @@ route.post(
       });
     } catch (error) {
       await promiseConn.query("ROLLBACK").catch(err => console.error("Rollback error:", err));
-      uploadedFiles.forEach(filePath => { if (fs.existsSync(filePath)) fs.unlinkSync(filePath); });
+      // ❌ REMOVED: Local file cleanup (uploadedFiles.forEach...)
       console.error("POST /new-logo Error:", error.sqlMessage || error.message);
       res.status(500).json({
         message: "Server error during logo creation. Transaction rolled back.",
@@ -146,6 +193,7 @@ route.post(
     }
   }
 );
+
 
 
 // =====================
@@ -157,19 +205,22 @@ route.post(
   authorizeRoles("Super Admin", "Admin", "Manager"),
   upload.single("logo"),
   async (req, res) => {
-    let filePath;
+    // ❌ REMOVED: let filePath;
     try {
       const { id } = req.params;
       const { color } = req.body;
 
       if (!req.file) return res.status(400).json({ message: "SVG logo file is required." });
 
-      filePath = path.join(uploadDir, req.file.filename);
+      // ❌ REMOVED: filePath = path.join(uploadDir, req.file.filename);
 
       const [existing] = await promiseConn.execute("SELECT id FROM logos WHERE id = ?", [id]);
       if (existing.length === 0) return res.status(404).json({ message: "Logo not found." });
 
-      const fileUrl = `${req.protocol}://${req.get("host")}/uploads/logos/${req.file.filename}`;
+      // 🛑 FIXED: Use uploadToCloudinary
+      const fileUrl = await uploadToCloudinary(req.file.buffer, "logos");
+      
+      // ❌ REMOVED: const fileUrl = `${req.protocol}://${req.get("host")}/uploads/logos/${req.file.filename}`;
       const createdAt = new Date().toISOString().slice(0, 19).replace("T", " ");
 
       await promiseConn.execute(
@@ -179,7 +230,7 @@ route.post(
 
       res.status(201).json({ message: "Variant added successfully.", variant: { color, url: fileUrl, created_at: createdAt } });
     } catch (error) {
-      if (filePath && fs.existsSync(filePath)) fs.unlinkSync(filePath);
+      // ❌ REMOVED: Local file cleanup (if (filePath && fs.existsSync(filePath)) fs.unlinkSync(filePath);)
       console.error("POST /:id/variant Error:", error.sqlMessage || error.message);
       res.status(500).json({ message: "Server error.", error: error.sqlMessage || error.message });
     }
@@ -569,12 +620,10 @@ route.delete("/:id", Authtoken, authorizeRoles("Super Admin", "Admin", "Manager"
 
     await promiseConn.query("COMMIT");
 
-    for (const variant of variantRows) {
-      if (variant.url) {
-        const filePath = path.join(uploadDir, path.basename(variant.url));
-        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-      }
-    }
+    const deletePromises = variantRows.map(variant => deleteFromCloudinary(variant.url));
+await Promise.all(deletePromises);
+
+
 
     res.json({ message: "Logo, variants, and placements deleted successfully." });
 
@@ -624,10 +673,7 @@ route.delete("/variant/:variantId", Authtoken, authorizeRoles("Super Admin", "Ad
     await promiseConn.execute("DELETE FROM logo_variants WHERE id = ?", [variantId]);
 
     await promiseConn.query("COMMIT");
-    if (variant.url) {
-      const filePath = path.join(uploadDir, path.basename(variant.url));
-      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-    }
+    await deleteFromCloudinary(variant.url);
 
     res.json({ message: "Variant deleted successfully." });
 
