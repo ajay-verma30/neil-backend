@@ -64,7 +64,7 @@ route.post(
         sku,
         category,
         price,
-        variants,
+        variants, // This now contains size/price/stock details inside each variant
         group_visibility,
         sub_cat,
         org_id: orgIdFromFrontend,
@@ -90,7 +90,7 @@ route.post(
       if (sub_cat) params.push(sub_cat);
       await conn.query(insertProduct, params);
 
-      // 🖼 Upload product images to Cloudinary
+      // 🖼 Upload product images to Cloudinary (UNCHANGED)
       const productImages = files.filter((f) => f.fieldname === "productImages");
       for (const file of productImages) {
         const url = await uploadToCloudinary(file.buffer, "products");
@@ -112,14 +112,39 @@ route.post(
         const v = parsedVariants[i];
         if (!v.sku) continue;
 
-        const variantPrice = parseFloat(v.price) || parseFloat(price) || 0.0;
+        // 1. INSERT into product_variants (NO size or size-level price)
         const [variantRes] = await conn.query(
-          "INSERT INTO product_variants (product_id, color, size, sku, price) VALUES (?, ?, ?, ?, ?)",
-          [productId, v.color || null, v.size || null, v.sku, variantPrice]
+          "INSERT INTO product_variants (product_id, color, sku) VALUES (?, ?, ?)",
+          [productId, v.color || null, v.sku]
         );
         const variantId = variantRes.insertId;
 
-        // Upload variant images to Cloudinary
+        // 2. INSERT into variant_size_attributes (New logic for size and price adjustment)
+        let parsedSizes = [];
+        try {
+            // v.sizes is expected to be an array of objects: 
+            // [{"name": "L", "adjustment": 5.00, "stock": 10}, ...]
+            parsedSizes = Array.isArray(v.sizes) ? v.sizes : JSON.parse(v.sizes || "[]");
+        } catch {}
+
+
+        if (parsedSizes.length > 0) {
+            for (const sizeAttr of parsedSizes) {
+                if (!sizeAttr.name) continue;
+
+                const adjustment = parseFloat(sizeAttr.adjustment) || 0.00;
+                const stock = parseInt(sizeAttr.stock) || 0;
+
+                await conn.query(
+                    `INSERT INTO variant_size_attributes 
+                    (variant_id, size, price_adjustment, stock_quantity) 
+                    VALUES (?, ?, ?, ?)`,
+                    [variantId, sizeAttr.name, adjustment, stock]
+                );
+            }
+        }
+        
+        // Upload variant images to Cloudinary (UNCHANGED)
         const variantFiles = files.filter((f) => f.fieldname.startsWith(`variant-${i}-`));
         for (const file of variantFiles) {
           const type = file.fieldname.split("-")[2] || "front";
@@ -131,7 +156,7 @@ route.post(
         }
       }
 
-      // 👀 Group visibility
+      // 👀 Group visibility (UNCHANGED)
       let parsedGV = [];
       try {
         parsedGV =
@@ -146,8 +171,8 @@ route.post(
         for (const gv of parsedGV) {
           await conn.query(
             `INSERT INTO group_product_visibility 
-             (group_id, product_id, is_visible, created_at, updated_at)
-             VALUES (?, ?, ?, NOW(), NOW())`,
+              (group_id, product_id, is_visible, created_at, updated_at)
+              VALUES (?, ?, ?, NOW(), NOW())`,
             [gv.group_id, productId, gv.is_visible ?? true]
           );
         }
