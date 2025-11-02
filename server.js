@@ -13,7 +13,7 @@ const allowedOrigins = [
   "http://localhost:3002",
   "http://localhost:3001", 
   "https://my-production-domain.com",
-  "neil-admin.vercel.app"
+  "https://neil-admin.vercel.app"
 ];
 
 app.use(cors({
