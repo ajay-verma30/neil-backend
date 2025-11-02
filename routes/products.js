@@ -190,14 +190,16 @@ route.post(
   }
 );
 
+
+//get all products
 route.get("/all-products", Authtoken, async (req, res) => {
+  const conn = await promisePool.getConnection(); 
   try {
     const { title, sku, isActive } = req.query;
     const requester = req.user;
     const where = [];
     const params = [];
 
-    // 🔐 Org-level filter
     if (!requester) where.push("org_id IS NULL");
     else if (requester.role !== "Super Admin") {
       if (requester.org_id) {
@@ -219,42 +221,61 @@ route.get("/all-products", Authtoken, async (req, res) => {
 
     const whereSql = where.length ? "WHERE " + where.join(" AND ") : "";
 
-    const [products] = await promisePool.query(
+    const [products] = await conn.query(
       `SELECT * FROM products ${whereSql} ORDER BY created_at DESC`,
       params
     );
     if (!products.length) return res.status(404).json({ message: "No products found" });
 
     const productIds = products.map((p) => p.id);
-    const [variants] = await promisePool.query(
-      "SELECT id, product_id, color, size, sku, price FROM product_variants WHERE product_id IN (?)",
+
+    const [variants] = await conn.query(
+      "SELECT id, product_id, color, sku FROM product_variants WHERE product_id IN (?)",
       [productIds]
     );
     const variantIds = variants.map((v) => v.id);
+
     const [variantImages] = variantIds.length
-      ? await promisePool.query(
+      ? await conn.query(
           "SELECT variant_id, url, type FROM variant_images WHERE variant_id IN (?)",
           [variantIds]
         )
       : [[]];
 
-    const variantsWithImages = variants.map((v) => ({
+    let [sizeAttributes] = [[]];
+    if (variantIds.length) {
+      [sizeAttributes] = await conn.query(
+        `SELECT 
+          variant_id, 
+          size AS name,              -- Renamed 'size' to 'name' for frontend consistency
+          price_adjustment AS adjustment, 
+          stock_quantity AS stock 
+        FROM variant_size_attributes 
+        WHERE variant_id IN (?)`,
+        [variantIds]
+      );
+    }
+  
+    
+    const variantsWithAttributes = variants.map((v) => ({
       ...v,
+      attributes: sizeAttributes.filter((attr) => attr.variant_id === v.id), 
       images: variantImages.filter((img) => img.variant_id === v.id),
     }));
 
     const result = products.map((p) => ({
       ...p,
-      variants: variantsWithImages.filter((v) => v.product_id === p.id),
+      variants: variantsWithAttributes.filter((v) => v.product_id === p.id),
     }));
 
     res.status(200).json({ products: result });
   } catch (e) {
     console.error("❌ Error fetching products:", e);
     res.status(500).json({ message: "Internal Server Error", error: e.message });
+  } finally {
+    if (conn) conn.release();
   }
 });
-
 
 /* -------------------------------------------------------------------------- */
 /* ✅ PRODUCTS SUMMARY */
