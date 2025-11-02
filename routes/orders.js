@@ -33,8 +33,8 @@ router.post("/new", authenticateToken, async (req, res) => {
 
     // ✅ Verify total
     const verifiedTotal = cart
-      .reduce((sum, item) => sum + parseFloat(item.price || 0) * (item.quantity || 0), 0)
-      .toFixed(2);
+  .reduce((sum, item) => sum + parseFloat(item.unit_price || 0) * (item.quantity || 0), 0)
+  .toFixed(2);
 
     if (parseFloat(verifiedTotal) !== parseFloat(totalAmount)) {
       return res.status(400).json({
@@ -61,9 +61,9 @@ router.post("/new", authenticateToken, async (req, res) => {
     // ✅ Insert orders
    for (const item of cart) {
   const orderId = nanoid(10);
-  const price = Number(item.price) || 0;
-  const qty = Number(item.quantity) || 0;
-  const itemTotal = (parseFloat(item.unit_price) * item.quantity).toFixed(2);
+  const price = Number(item.unit_price) || 0;
+const qty = Number(item.quantity) || 0;
+const itemTotal = (price * qty).toFixed(2)
 
   if (isNaN(itemTotal)) {
     console.warn("⚠️ Skipping invalid cart item:", item);
@@ -93,7 +93,7 @@ router.post("/new", authenticateToken, async (req, res) => {
           .map(([size, qty]) => `<div>${size.toUpperCase()}: ${qty}</div>`)
           .join("");
 
-        const subtotal = (parseFloat(item.price) * item.quantity).toFixed(2);
+        const subtotal = (parseFloat(item.unit_price) * item.quantity).toFixed(2);
 
         return `
           <tr>
