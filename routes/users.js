@@ -162,7 +162,7 @@ route.post(
         ? org_id
         : requester.org_id;
 
-      if (!f_name || !l_name || !email || !contact || !password || !targetOrg)
+      if (!f_name || !l_name || !email || !contact || !password)
         return res.status(400).json({ message: "All required fields missing." });
 
       if (!isSuperAdmin(req) && role === "Super Admin")

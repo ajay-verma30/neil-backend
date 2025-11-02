@@ -146,7 +146,6 @@ const itemTotal = (price * qty).toFixed(2)
       totalAmount: verifiedTotal,
     });
   } catch (error) {
-    console.error("❌ Checkout error:", error);
     res.status(500).json({ success: false, message: "Checkout failed." });
   }
 });
@@ -215,7 +214,6 @@ router.get("/all", authenticateToken, async (req, res) => {
 
     res.json({ success: true, count: orders.length, orders });
   } catch (error) {
-    console.error("❌ Fetch orders error:", error);
     res.status(500).json({ success: false, message: "Failed to fetch orders." });
   }
 });
@@ -274,7 +272,6 @@ router.get("/order-summary", authenticateToken, async (req, res) => {
       data: { total_orders: result[0]?.total_orders || 0 },
     });
   } catch (err) {
-    console.error("❌ Error fetching order summary:", err);
     res.status(500).json({ success: false, message: "Server error fetching order summary." });
   }
 });
@@ -339,7 +336,6 @@ router.get("/order-trends", authenticateToken, async (req, res) => {
 
     res.json({ success: true, data: rows });
   } catch (err) {
-    console.error("❌ Error fetching order trends:", err);
     res.status(500).json({ success: false, message: "Server error fetching order trends." });
   }
 });
@@ -402,7 +398,6 @@ router.get("/order-status-summary", authenticateToken, async (req, res) => {
 
     res.json({ success: true, data: rows });
   } catch (err) {
-    console.error("❌ Error fetching order status summary:", err);
     res.status(500).json({ success: false, message: "Server error fetching order status summary." });
   }
 });
@@ -480,7 +475,6 @@ router.get("/:id", authenticateToken, async (req, res) => {
 
     res.json({ success: true, order });
   } catch (error) {
-    console.error("❌ Fetch order by ID error:", error);
     res.status(500).json({ success: false, message: "Failed to fetch order." });
   }
 });
@@ -529,7 +523,6 @@ router.patch("/:id", authenticateToken, async (req, res) => {
 
     res.json({ success: true, message: "Order updated and email sent successfully." });
   } catch (error) {
-    console.error("❌ Update order error:", error);
     res.status(500).json({ success: false, message: "Failed to update order." });
   }
 });
