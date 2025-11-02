@@ -158,9 +158,7 @@ route.post(
       const { f_name, l_name, email, contact, password, role, org_id } = req.body;
       const requester = req.user;
 
-      let targetOrg = isSuperAdmin(req)
-        ? org_id
-        : requester.org_id;
+      let targetOrg = isSuperAdmin(req.user) ? org_id : requester.org_id;
 
       if (!f_name || !l_name || !email || !contact || !password)
         return res.status(400).json({ message: "All required fields missing." });
