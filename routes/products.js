@@ -299,6 +299,60 @@ route.get("/all-products", Authtoken, async (req, res) => {
 });
 
 /* -------------------------------------------------------------------------- */
+/* ✅ PRODUCTS SUMMARY */
+/* -------------------------------------------------------------------------- */
+route.get("/products-summary", Authtoken, async (req, res) => {
+  try {
+    const { role, org_id } = req.user;
+    const { org_id: queryOrg, timeframe } = req.query;
+
+    if (!["Super Admin", "Admin", "Manager"].includes(role))
+      return res.status(403).json({ success: false, message: "Access denied." });
+
+    const conditions = [];
+    const params = [];
+
+    if (role === "Super Admin" && queryOrg) {
+      conditions.push("org_id = ?");
+      params.push(queryOrg);
+    } else if (role !== "Super Admin") {
+      conditions.push("org_id = ?");
+      params.push(org_id);
+    }
+
+    if (timeframe) {
+      switch (timeframe) {
+        case "day":
+          conditions.push("DATE(created_at) = CURDATE()");
+          break;
+        case "week":
+          conditions.push("YEARWEEK(created_at, 1) = YEARWEEK(CURDATE(), 1)");
+          break;
+        case "month":
+          conditions.push(
+            "MONTH(created_at) = MONTH(CURDATE()) AND YEAR(created_at) = YEAR(CURDATE())"
+          );
+          break;
+        case "year":
+          conditions.push("YEAR(created_at) = YEAR(CURDATE())");
+          break;
+      }
+    }
+
+    const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+    const [result] = await promisePool.query(
+      `SELECT COUNT(*) AS total_products FROM products ${whereClause}`,
+      params
+    );
+
+    res.json({ success: true, data: { total_products: result[0]?.total_products || 0 } });
+  } catch (err) {
+    console.error("❌ Error fetching products summary:", err);
+    res.status(500).json({ success: false, message: "Server error while fetching summary." });
+  }
+});
+
+/* -------------------------------------------------------------------------- */
 /* ✅ GET SPECIFIC PRODUCT */
 /* -------------------------------------------------------------------------- */
 route.get("/:id", Authtoken, async (req, res) => {
@@ -406,59 +460,6 @@ route.get("/:id", Authtoken, async (req, res) => {
 });
 
 
-/* -------------------------------------------------------------------------- */
-/* ✅ PRODUCTS SUMMARY */
-/* -------------------------------------------------------------------------- */
-route.get("/products-summary", Authtoken, async (req, res) => {
-  try {
-    const { role, org_id } = req.user;
-    const { org_id: queryOrg, timeframe } = req.query;
-
-    if (!["Super Admin", "Admin", "Manager"].includes(role))
-      return res.status(403).json({ success: false, message: "Access denied." });
-
-    const conditions = [];
-    const params = [];
-
-    if (role === "Super Admin" && queryOrg) {
-      conditions.push("org_id = ?");
-      params.push(queryOrg);
-    } else if (role !== "Super Admin") {
-      conditions.push("org_id = ?");
-      params.push(org_id);
-    }
-
-    if (timeframe) {
-      switch (timeframe) {
-        case "day":
-          conditions.push("DATE(created_at) = CURDATE()");
-          break;
-        case "week":
-          conditions.push("YEARWEEK(created_at, 1) = YEARWEEK(CURDATE(), 1)");
-          break;
-        case "month":
-          conditions.push(
-            "MONTH(created_at) = MONTH(CURDATE()) AND YEAR(created_at) = YEAR(CURDATE())"
-          );
-          break;
-        case "year":
-          conditions.push("YEAR(created_at) = YEAR(CURDATE())");
-          break;
-      }
-    }
-
-    const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
-    const [result] = await promisePool.query(
-      `SELECT COUNT(*) AS total_products FROM products ${whereClause}`,
-      params
-    );
-
-    res.json({ success: true, data: { total_products: result[0]?.total_products || 0 } });
-  } catch (err) {
-    console.error("❌ Error fetching products summary:", err);
-    res.status(500).json({ success: false, message: "Server error while fetching summary." });
-  }
-});
 
 
 // //specific product
