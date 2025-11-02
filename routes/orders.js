@@ -63,7 +63,7 @@ router.post("/new", authenticateToken, async (req, res) => {
   const orderId = nanoid(10);
   const price = Number(item.price) || 0;
   const qty = Number(item.quantity) || 0;
-  const itemTotal = (price * qty).toFixed(2);
+  const itemTotal = (parseFloat(item.unit_price) * item.quantity).toFixed(2);
 
   if (isNaN(itemTotal)) {
     console.warn("⚠️ Skipping invalid cart item:", item);
