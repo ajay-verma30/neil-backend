@@ -61,7 +61,11 @@ route.post("/new-address", authenticateToken, async (req, res) => {
         .json({ message: "Unable to save the address at this moment" });
     }
 
-    return res.status(201).json({ message: "Address saved successfully" });
+    return res.status(201).json({
+  success: true,
+  message: "Address saved successfully",
+  address_id: result.insertId, 
+});
   } catch (error) {
     console.error("❌ Error saving address:", error);
     res.status(500).json({ message: "Internal Server Error", error: error.message });

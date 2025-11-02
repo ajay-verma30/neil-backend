@@ -15,8 +15,9 @@ const promiseConn = pool.promise();
  */
 router.post("/new", authenticateToken, async (req, res) => {
   try {
-    const { user, cart, totalAmount } = req.body;
+    const { user, cart, totalAmount, shipping_address_id, billing_address_id } = req.body;
 
+    // ✅ Validate user
     if (!user?.id || !user?.email || !user?.org_id) {
       return res.status(401).json({
         success: false,
@@ -24,6 +25,15 @@ router.post("/new", authenticateToken, async (req, res) => {
       });
     }
 
+    // ✅ Validate address IDs
+    if (!shipping_address_id || !billing_address_id) {
+      return res.status(400).json({
+        success: false,
+        message: "Shipping and billing address are required.",
+      });
+    }
+
+    // ✅ Validate cart
     if (!Array.isArray(cart) || cart.length === 0) {
       return res.status(400).json({
         success: false,
@@ -33,8 +43,8 @@ router.post("/new", authenticateToken, async (req, res) => {
 
     // ✅ Verify total
     const verifiedTotal = cart
-  .reduce((sum, item) => sum + parseFloat(item.unit_price || 0) * (item.quantity || 0), 0)
-  .toFixed(2);
+      .reduce((sum, item) => sum + parseFloat(item.unit_price || 0) * (item.quantity || 0), 0)
+      .toFixed(2);
 
     if (parseFloat(verifiedTotal) !== parseFloat(totalAmount)) {
       return res.status(400).json({
@@ -58,29 +68,39 @@ router.post("/new", authenticateToken, async (req, res) => {
       });
     }
 
-    // ✅ Insert orders
-   for (const item of cart) {
-  const orderId = nanoid(10);
-  const price = Number(item.unit_price) || 0;
-const qty = Number(item.quantity) || 0;
-const itemTotal = (price * qty).toFixed(2)
+    // ✅ Create order entries for each item
+    for (const item of cart) {
+      const orderId = nanoid(10);
+      const price = Number(item.unit_price) || 0;
+      const qty = Number(item.quantity) || 0;
+      const itemTotal = (price * qty).toFixed(2);
 
-  if (isNaN(itemTotal)) {
-    console.warn("⚠️ Skipping invalid cart item:", item);
-    continue;
-  }
+      if (isNaN(itemTotal)) {
+        console.warn("⚠️ Skipping invalid cart item:", item);
+        continue;
+      }
 
-  await promiseConn.query(
-    `INSERT INTO orders (id, user_id, customizations_id, org_id, status, total_amount)
-     VALUES (?, ?, ?, ?, 'Pending', ?)`,
-    [orderId, user.id, item.id, user.org_id, itemTotal]
-  );
-}
-
+      await promiseConn.query(
+        `INSERT INTO orders (
+            id, user_id, customizations_id, org_id, 
+            shipping_address_id, billing_address_id, 
+            status, total_amount
+         ) VALUES (?, ?, ?, ?, ?, ?, 'Pending', ?)`,
+        [
+          orderId,
+          user.id,
+          item.id,
+          user.org_id,
+          shipping_address_id,
+          billing_address_id,
+          itemTotal,
+        ]
+      );
+    }
 
     const orderBatchId = "ORD-" + Date.now();
 
-    // ✅ Email HTML
+    // ✅ Prepare email HTML
     const tableRows = cart
       .map((item) => {
         const customization = customizations.find((c) => c.id === item.id);
@@ -132,13 +152,14 @@ const itemTotal = (price * qty).toFixed(2)
       <p style="margin-top:16px;">We’ll contact you soon with your shipping details.</p>
     `;
 
-    // ✅ Send emails
+    // ✅ Send confirmation emails
     if (user.email)
       await sendEmail(user.email, `Your Order Confirmation - ${orderBatchId}`, "Order Confirmation", html);
 
     if (process.env.EMAIL_ADMIN)
       await sendEmail(process.env.EMAIL_ADMIN, `New Order - ${orderBatchId}`, "New Order Received", html);
 
+    // ✅ Success response
     res.json({
       success: true,
       message: "Order placed successfully, confirmation sent.",
@@ -146,9 +167,11 @@ const itemTotal = (price * qty).toFixed(2)
       totalAmount: verifiedTotal,
     });
   } catch (error) {
-    res.status(500).json({ success: false, message: "Checkout failed." });
+    console.error("❌ Checkout Error:", error);
+    res.status(500).json({ success: false, message: "Checkout failed.", error: error.message });
   }
 });
+
 
 /**
  * 📦 GET ALL ORDERS (Role-Based)
@@ -415,15 +438,25 @@ router.get("/:id", authenticateToken, async (req, res) => {
     const [rows] = await promiseConn.query(
       `
       SELECT 
+        -- 🧾 Order info
         o.id AS order_id,
         o.status,
         o.total_amount,
         o.created_at AS order_date,
+        o.user_id,
+        o.shipping_address_id,
+        o.billing_address_id,
+
+        -- 👤 User info
         CONCAT(u.f_name, ' ', u.l_name) AS customer_name,
         u.email,
         u.contact,
+
+        -- 🏢 Organization info
         org.id AS organization_id,
         org.title AS organization_name,
+
+        -- 🛍️ Product + customization info
         c.preview_image_url,
         p.id AS product_id,
         p.title AS product_title,
@@ -434,6 +467,8 @@ router.get("/:id", authenticateToken, async (req, res) => {
         pv.color AS variant_color,
         pv.size AS variant_size,
         pv.sku AS variant_sku,
+
+        -- 🖼️ Logo + placement info
         l.id AS logo_id,
         l.title AS logo_title,
         lv.id AS logo_variant_id,
@@ -441,7 +476,24 @@ router.get("/:id", authenticateToken, async (req, res) => {
         lv.url AS logo_url,
         lp.id AS placement_id,
         lp.name AS placement_name,
-        lp.view AS placement_view
+        lp.view AS placement_view,
+
+        -- 🏠 Shipping address
+        sa.address_line1 AS shipping_address_line1,
+        sa.address_line2 AS shipping_address_line2,
+        sa.city AS shipping_city,
+        sa.state AS shipping_state,
+        sa.postal_code AS shipping_postal_code,
+        sa.country AS shipping_country,
+
+        -- 🧾 Billing address
+        ba.address_line1 AS billing_address_line1,
+        ba.address_line2 AS billing_address_line2,
+        ba.city AS billing_city,
+        ba.state AS billing_state,
+        ba.postal_code AS billing_postal_code,
+        ba.country AS billing_country
+
       FROM orders o
       JOIN users u ON o.user_id = u.id
       JOIN organizations org ON u.org_id = org.id
@@ -451,6 +503,8 @@ router.get("/:id", authenticateToken, async (req, res) => {
       JOIN logo_variants lv ON c.logo_variant_id = lv.id
       JOIN logos l ON lv.logo_id = l.id
       JOIN logo_placements lp ON c.placement_id = lp.id
+      LEFT JOIN addresses sa ON o.shipping_address_id = sa.id
+      LEFT JOIN addresses ba ON o.billing_address_id = ba.id
       WHERE o.id = ?
       `,
       [id]
@@ -462,7 +516,7 @@ router.get("/:id", authenticateToken, async (req, res) => {
 
     const order = rows[0];
 
-    // Authorization check
+    // ✅ Authorization check
     if (
       user.role !== "Super Admin" &&
       !(
@@ -473,11 +527,35 @@ router.get("/:id", authenticateToken, async (req, res) => {
       return res.status(403).json({ success: false, message: "Access denied to this order." });
     }
 
-    res.json({ success: true, order });
+    // ✅ Restructure address data neatly
+    const formattedOrder = {
+      ...order,
+      shipping_address: {
+        address_line1: order.shipping_address_line1,
+        address_line2: order.shipping_address_line2,
+        city: order.shipping_city,
+        state: order.shipping_state,
+        postal_code: order.shipping_postal_code,
+        country: order.shipping_country,
+      },
+      billing_address: {
+        address_line1: order.billing_address_line1,
+        address_line2: order.billing_address_line2,
+        city: order.billing_city,
+        state: order.billing_state,
+        postal_code: order.billing_postal_code,
+        country: order.billing_country,
+      },
+    };
+
+    // ✅ Send response
+    res.json({ success: true, order: formattedOrder });
   } catch (error) {
-    res.status(500).json({ success: false, message: "Failed to fetch order." });
+    console.error("❌ Error fetching order:", error);
+    res.status(500).json({ success: false, message: "Failed to fetch order.", error: error.message });
   }
 });
+
 
 
 /**
