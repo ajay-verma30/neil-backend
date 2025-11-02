@@ -675,4 +675,69 @@ route.post(
   }
 );
 
+route.get("/all-products", Authtoken, async (req, res) => {
+  try {
+    const { title, sku, isActive } = req.query;
+    const requester = req.user;
+    const where = [];
+    const params = [];
+
+    // 🔐 Org-level filter
+    if (!requester) where.push("org_id IS NULL");
+    else if (requester.role !== "Super Admin") {
+      if (requester.org_id) {
+        where.push("(org_id IS NULL OR org_id = ?)");
+        params.push(requester.org_id);
+      } else where.push("org_id IS NULL");
+    }
+
+    if (title) {
+      where.push("title LIKE ?");
+      params.push(`%${title}%`);
+    }
+    if (sku) {
+      where.push("sku LIKE ?");
+      params.push(`%${sku}%`);
+    }
+    if (typeof isActive !== "undefined")
+      where.push(isActive === "true" || isActive === "1" ? "isActive=TRUE" : "isActive=FALSE");
+
+    const whereSql = where.length ? "WHERE " + where.join(" AND ") : "";
+
+    const [products] = await promisePool.query(
+      `SELECT * FROM products ${whereSql} ORDER BY created_at DESC`,
+      params
+    );
+    if (!products.length) return res.status(404).json({ message: "No products found" });
+
+    const productIds = products.map((p) => p.id);
+    const [variants] = await promisePool.query(
+      "SELECT id, product_id, color, size, sku, price FROM product_variants WHERE product_id IN (?)",
+      [productIds]
+    );
+    const variantIds = variants.map((v) => v.id);
+    const [variantImages] = variantIds.length
+      ? await promisePool.query(
+          "SELECT variant_id, url, type FROM variant_images WHERE variant_id IN (?)",
+          [variantIds]
+        )
+      : [[]];
+
+    const variantsWithImages = variants.map((v) => ({
+      ...v,
+      images: variantImages.filter((img) => img.variant_id === v.id),
+    }));
+
+    const result = products.map((p) => ({
+      ...p,
+      variants: variantsWithImages.filter((v) => v.product_id === p.id),
+    }));
+
+    res.status(200).json({ products: result });
+  } catch (e) {
+    console.error("❌ Error fetching products:", e);
+    res.status(500).json({ message: "Internal Server Error", error: e.message });
+  }
+});
+
 module.exports = route;
