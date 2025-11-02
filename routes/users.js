@@ -214,6 +214,7 @@ route.post(
         message: "User created successfully and email sent.",
         user: { id: userId, f_name, l_name, email, contact, role, org_id: targetOrg },
       });
+      console.log({ id: userId, f_name, l_name, email, contact, role, org_id: targetOrg });
     } catch (err) {
       if (conn) await conn.rollback();
       console.error("❌ Error creating user:", err);
