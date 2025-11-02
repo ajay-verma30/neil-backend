@@ -46,6 +46,7 @@ app.use('/sub-categories', require('./routes/sub-categories'))
 app.use('/customization', require('./routes/customization.js'))
 app.use('/checkout', require('./routes/orders.js'))
 app.use('/address', require('./routes/address.js'))
+app.use('/cart', require('./routes/cart.js'))
 app.use("/auth", authRoutes);
 
 
