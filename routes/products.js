@@ -193,21 +193,26 @@ route.post(
 
 //get all products
 route.get("/all-products", Authtoken, async (req, res) => {
-  const conn = await promisePool.getConnection(); 
+  const conn = await promisePool.getConnection();
   try {
     const { title, sku, isActive } = req.query;
     const requester = req.user;
     const where = [];
     const params = [];
 
-    if (!requester) where.push("org_id IS NULL");
-    else if (requester.role !== "Super Admin") {
+    // 🧩 Organization logic
+    if (!requester) {
+      where.push("org_id IS NULL");
+    } else if (requester.role !== "Super Admin") {
       if (requester.org_id) {
         where.push("(org_id IS NULL OR org_id = ?)");
         params.push(requester.org_id);
-      } else where.push("org_id IS NULL");
+      } else {
+        where.push("org_id IS NULL");
+      }
     }
 
+    // 🧠 Search filters
     if (title) {
       where.push("title LIKE ?");
       params.push(`%${title}%`);
@@ -216,11 +221,13 @@ route.get("/all-products", Authtoken, async (req, res) => {
       where.push("sku LIKE ?");
       params.push(`%${sku}%`);
     }
-    if (typeof isActive !== "undefined")
+    if (typeof isActive !== "undefined") {
       where.push(isActive === "true" || isActive === "1" ? "isActive=TRUE" : "isActive=FALSE");
+    }
 
     const whereSql = where.length ? "WHERE " + where.join(" AND ") : "";
 
+    // 🧾 Fetch products
     const [products] = await conn.query(
       `SELECT * FROM products ${whereSql} ORDER BY created_at DESC`,
       params
@@ -229,40 +236,54 @@ route.get("/all-products", Authtoken, async (req, res) => {
 
     const productIds = products.map((p) => p.id);
 
+    // 🧩 Fix 1: Dynamic placeholders for MySQL IN clause
+    const productPlaceholders = productIds.map(() => "?").join(",");
+
+    // 🎨 Fetch variants
     const [variants] = await conn.query(
-      "SELECT id, product_id, color, sku FROM product_variants WHERE product_id IN (?)",
-      [productIds]
+      `SELECT id, product_id, color, sku, price 
+       FROM product_variants 
+       WHERE product_id IN (${productPlaceholders})`,
+      productIds
     );
     const variantIds = variants.map((v) => v.id);
 
-    const [variantImages] = variantIds.length
-      ? await conn.query(
-          "SELECT variant_id, url, type FROM variant_images WHERE variant_id IN (?)",
-          [variantIds]
-        )
-      : [[]];
-
-    let [sizeAttributes] = [[]];
+    // 🖼 Fetch variant images
+    let variantImages = [];
     if (variantIds.length) {
-      [sizeAttributes] = await conn.query(
-        `SELECT 
-          variant_id, 
-          size AS name,              -- Renamed 'size' to 'name' for frontend consistency
-          price_adjustment AS adjustment, 
-          stock_quantity AS stock 
-        FROM variant_size_attributes 
-        WHERE variant_id IN (?)`,
-        [variantIds]
+      const variantPlaceholders = variantIds.map(() => "?").join(",");
+      [variantImages] = await conn.query(
+        `SELECT variant_id, url, type 
+         FROM variant_images 
+         WHERE variant_id IN (${variantPlaceholders})`,
+        variantIds
       );
     }
-  
-    
+
+    // 📏 Fetch variant size attributes
+    let sizeAttributes = [];
+    if (variantIds.length) {
+      const variantPlaceholders = variantIds.map(() => "?").join(",");
+      [sizeAttributes] = await conn.query(
+        `SELECT 
+            variant_id, 
+            size AS name, 
+            price_adjustment AS adjustment, 
+            stock_quantity AS stock 
+         FROM variant_size_attributes 
+         WHERE variant_id IN (${variantPlaceholders})`,
+        variantIds
+      );
+    }
+
+    // 🧠 Group variants
     const variantsWithAttributes = variants.map((v) => ({
       ...v,
-      attributes: sizeAttributes.filter((attr) => attr.variant_id === v.id), 
       images: variantImages.filter((img) => img.variant_id === v.id),
+      attributes: sizeAttributes.filter((attr) => attr.variant_id === v.id),
     }));
 
+    // 🧱 Combine into product structure
     const result = products.map((p) => ({
       ...p,
       variants: variantsWithAttributes.filter((v) => v.product_id === p.id),
@@ -276,6 +297,114 @@ route.get("/all-products", Authtoken, async (req, res) => {
     if (conn) conn.release();
   }
 });
+
+/* -------------------------------------------------------------------------- */
+/* ✅ GET SPECIFIC PRODUCT */
+/* -------------------------------------------------------------------------- */
+route.get("/:id", Authtoken, async (req, res) => {
+  const conn = await promisePool.getConnection();
+  try {
+    const { id } = req.params;
+
+    // 1️⃣ Fetch main product
+    const [productRows] = await conn.query("SELECT * FROM products WHERE id = ?", [id]);
+    if (!productRows.length)
+      return res.status(404).json({ message: "Product not found" });
+
+    const product = productRows[0];
+
+    // 2️⃣ Fetch product images
+    const [productImages] = await conn.query(
+      "SELECT id, product_id, url FROM product_images WHERE product_id = ?",
+      [id]
+    );
+
+    // 3️⃣ Fetch product variants
+    const [variants] = await conn.query(
+      "SELECT id, product_id, color, sku, price FROM product_variants WHERE product_id = ?",
+      [id]
+    );
+
+    if (!variants.length) {
+      const [groupVis] = await conn.query(
+        "SELECT group_id, is_visible FROM group_product_visibility WHERE product_id = ?",
+        [id]
+      );
+
+      return res.status(200).json({
+        product: {
+          ...product,
+          images: productImages,
+          variants: [],
+          group_visibility: groupVis,
+        },
+      });
+    }
+
+    const variantIds = variants.map(v => v.id);
+
+    // 4️⃣ Fetch variant images
+    const [variantImages] = await conn.query(
+      `SELECT id, variant_id, url, type 
+       FROM variant_images 
+       WHERE variant_id IN (?)`,
+      [variantIds]
+    );
+
+    // 5️⃣ Fetch variant size attributes
+    const [sizeAttributes] = await conn.query(
+      `SELECT 
+          variant_id, 
+          size AS name, 
+          price_adjustment AS adjustment, 
+          stock_quantity AS stock
+       FROM variant_size_attributes
+       WHERE variant_id IN (?)`,
+      [variantIds]
+    );
+
+    // 6️⃣ Merge variant data properly
+    const variantsWithDetails = variants.map(v => {
+      const imgs = variantImages.filter(i => i.variant_id === v.id);
+      const attrs = sizeAttributes
+        .filter(a => a.variant_id === v.id)
+        .map(a => ({
+          ...a,
+          adjustment: Number(a.adjustment || 0).toFixed(2),
+          stock: Number(a.stock || 0),
+          final_price: (Number(product.price) + Number(a.adjustment || 0)).toFixed(2),
+        }));
+
+      return {
+        ...v,
+        images: imgs,
+        attributes: attrs, // 🧩 this was missing in your response
+      };
+    });
+
+    // 7️⃣ Group visibility
+    const [groupVis] = await conn.query(
+      "SELECT group_id, is_visible FROM group_product_visibility WHERE product_id = ?",
+      [id]
+    );
+
+    // 8️⃣ Final Response
+    res.status(200).json({
+      product: {
+        ...product,
+        images: productImages,
+        variants: variantsWithDetails,
+        group_visibility: groupVis,
+      },
+    });
+  } catch (e) {
+    console.error("❌ Error fetching specific product:", e);
+    res.status(500).json({ message: "Internal Server Error", error: e.message });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
 
 /* -------------------------------------------------------------------------- */
 /* ✅ PRODUCTS SUMMARY */
@@ -331,105 +460,55 @@ route.get("/products-summary", Authtoken, async (req, res) => {
   }
 });
 
-/* -------------------------------------------------------------------------- */
-/* ✅ GET SPECIFIC PRODUCT */
-/* -------------------------------------------------------------------------- */
-route.get("/:id", Authtoken, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const [products] = await promisePool.query("SELECT * FROM products WHERE id=?", [id]);
-    if (!products.length) return res.status(404).json({ message: "Product not found" });
 
-    const product = products[0];
-    const [images] = await promisePool.query("SELECT * FROM product_images WHERE product_id=?", [
-      id,
-    ]);
-    const [variants] = await promisePool.query(
-      "SELECT * FROM product_variants WHERE product_id=?",
-      [id]
-    );
+// //specific product
 
-    const variantIds = variants.map((v) => v.id);
-    const [variantImages] = variantIds.length
-      ? await promisePool.query(
-          "SELECT * FROM variant_images WHERE variant_id IN (?)",
-          [variantIds]
-        )
-      : [[]];
+// route.get("/:id", Authtoken, async (req, res) => {
+//   try {
+//     const { id } = req.params;
+//     const [products] = await promisePool.query("SELECT * FROM products WHERE id=?", [id]);
+//     if (!products.length) return res.status(404).json({ message: "Product not found" });
 
-    const variantsWithImages = variants.map((v) => ({
-      ...v,
-      images: variantImages.filter((img) => img.variant_id === v.id),
-    }));
+//     const product = products[0];
+//     const [images] = await promisePool.query("SELECT * FROM product_images WHERE product_id=?", [
+//       id,
+//     ]);
+//     const [variants] = await promisePool.query(
+//       "SELECT * FROM product_variants WHERE product_id=?",
+//       [id]
+//     );
 
-    const [groupVis] = await promisePool.query(
-      "SELECT group_id, is_visible FROM group_product_visibility WHERE product_id=?",
-      [id]
-    );
+//     const variantIds = variants.map((v) => v.id);
+//     const [variantImages] = variantIds.length
+//       ? await promisePool.query(
+//           "SELECT * FROM variant_images WHERE variant_id IN (?)",
+//           [variantIds]
+//         )
+//       : [[]];
 
-    res.status(200).json({
-      product: {
-        ...product,
-        images,
-        variants: variantsWithImages,
-        group_visibility: groupVis,
-      },
-    });
-  } catch (e) {
-    console.error("❌ Error fetching product:", e);
-    res.status(500).json({ message: "Internal Server Error", error: e.message });
-  }
-});
+//     const variantsWithImages = variants.map((v) => ({
+//       ...v,
+//       images: variantImages.filter((img) => img.variant_id === v.id),
+//     }));
 
+//     const [groupVis] = await promisePool.query(
+//       "SELECT group_id, is_visible FROM group_product_visibility WHERE product_id=?",
+//       [id]
+//     );
 
-//specific product
-
-route.get("/:id", Authtoken, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const [products] = await promisePool.query("SELECT * FROM products WHERE id=?", [id]);
-    if (!products.length) return res.status(404).json({ message: "Product not found" });
-
-    const product = products[0];
-    const [images] = await promisePool.query("SELECT * FROM product_images WHERE product_id=?", [
-      id,
-    ]);
-    const [variants] = await promisePool.query(
-      "SELECT * FROM product_variants WHERE product_id=?",
-      [id]
-    );
-
-    const variantIds = variants.map((v) => v.id);
-    const [variantImages] = variantIds.length
-      ? await promisePool.query(
-          "SELECT * FROM variant_images WHERE variant_id IN (?)",
-          [variantIds]
-        )
-      : [[]];
-
-    const variantsWithImages = variants.map((v) => ({
-      ...v,
-      images: variantImages.filter((img) => img.variant_id === v.id),
-    }));
-
-    const [groupVis] = await promisePool.query(
-      "SELECT group_id, is_visible FROM group_product_visibility WHERE product_id=?",
-      [id]
-    );
-
-    res.status(200).json({
-      product: {
-        ...product,
-        images,
-        variants: variantsWithImages,
-        group_visibility: groupVis,
-      },
-    });
-  } catch (e) {
-    console.error("❌ Error fetching product:", e);
-    res.status(500).json({ message: "Internal Server Error", error: e.message });
-  }
-});
+//     res.status(200).json({
+//       product: {
+//         ...product,
+//         images,
+//         variants: variantsWithImages,
+//         group_visibility: groupVis,
+//       },
+//     });
+//   } catch (e) {
+//     console.error("❌ Error fetching product:", e);
+//     res.status(500).json({ message: "Internal Server Error", error: e.message });
+//   }
+// });
 
 /* -------------------------------------------------------------------------- */
 /* ✅ UPDATE PRODUCT */
