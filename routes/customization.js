@@ -2,11 +2,11 @@ const express = require("express");
 const route = express.Router();
 const { nanoid } = require("nanoid");
 const mysqlconnect = require("../db/conn");
-const pool = mysqlconnect().promise(); // ✅ pooled connection
+const pool = mysqlconnect().promise();
 const Authtoken = require("../Auth/tokenAuthentication");
-const fs = require("fs");
 const multer = require("multer");
-const path = require("path");
+const cloudinary = require("./cloudinary");
+const streamifier = require("streamifier");
 
 // =====================
 // Helper Functions
@@ -23,43 +23,40 @@ const authorizeRoles = (...allowedRoles) => {
 };
 
 // =====================
-// Multer Configuration
+// Multer (Memory Storage for Cloudinary)
 // =====================
-const uploadDir = path.join(__dirname, "../uploads/previews");
-if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
-
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, uploadDir),
-  filename: (req, file, cb) => {
-    const extMap = {
-      "image/png": ".png",
-      "image/jpeg": ".jpg",
-      "image/jpg": ".jpg",
-      "image/svg+xml": ".svg",
-    };
-    const ext = extMap[file.mimetype] || path.extname(file.originalname);
-    const uniqueName = `${Date.now()}-${nanoid(8)}${ext}`;
-    cb(null, uniqueName);
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 }, // Max 5MB
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = ["image/svg+xml", "image/png", "image/jpeg"];
+    if (allowedTypes.includes(file.mimetype)) cb(null, true);
+    else cb(new Error("Only image files are allowed (SVG, PNG, JPG)!"), false);
   },
 });
 
-const fileFilter = (req, file, cb) => {
-  const allowedTypes = ["image/svg+xml", "image/png", "image/jpeg"];
-  if (allowedTypes.includes(file.mimetype)) cb(null, true);
-  else cb(new Error("Only image files are allowed (SVG, PNG, JPG)!"), false);
-};
-
-const upload = multer({ storage, fileFilter });
+// =====================
+// Helper: Upload Buffer to Cloudinary
+// =====================
+const uploadToCloudinary = (buffer, folder) =>
+  new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      { folder },
+      (error, result) => {
+        if (error) reject(error);
+        else resolve(result.secure_url);
+      }
+    );
+    streamifier.createReadStream(buffer).pipe(stream);
+  });
 
 // =====================
 // POST /new - Create Customization
 // =====================
 route.post("/new", Authtoken, upload.single("preview"), async (req, res) => {
   let conn;
-  let uploadedFilePath = null;
-
   try {
-    conn = await pool.getConnection(); // ✅ pooled connection
+    conn = await pool.getConnection();
 
     const { user_id, product_variant_id, logo_variant_id, placement_id } = req.body;
 
@@ -67,17 +64,19 @@ route.post("/new", Authtoken, upload.single("preview"), async (req, res) => {
       return res.status(400).json({ message: "Missing required fields." });
     }
 
-    const id = nanoid(10);
-    const previewPath = req.file ? `/uploads/previews/${req.file.filename}` : null;
-    uploadedFilePath = req.file ? req.file.path : null;
+    let previewUrl = null;
+    if (req.file && req.file.buffer) {
+      previewUrl = await uploadToCloudinary(req.file.buffer, "customizations/previews");
+    }
 
+    const id = nanoid(10);
     await conn.query(
       `
       INSERT INTO customizations 
       (id, user_id, product_variant_id, logo_variant_id, placement_id, preview_image_url)
       VALUES (?, ?, ?, ?, ?, ?)
       `,
-      [id, user_id, product_variant_id, logo_variant_id, placement_id, previewPath]
+      [id, user_id, product_variant_id, logo_variant_id, placement_id, previewUrl]
     );
 
     return res.status(201).json({
@@ -88,18 +87,17 @@ route.post("/new", Authtoken, upload.single("preview"), async (req, res) => {
         product_variant_id,
         logo_variant_id,
         placement_id,
-        preview_image_url: previewPath,
+        preview_image_url: previewUrl,
       },
     });
   } catch (error) {
     console.error("❌ Error in /customizations/new:", error);
-    if (uploadedFilePath && fs.existsSync(uploadedFilePath)) fs.unlinkSync(uploadedFilePath);
     return res.status(500).json({
       message: "Server error while creating customization.",
       error: error.sqlMessage || error.message,
     });
   } finally {
-    if (conn) conn.release(); // ✅ always release the connection
+    if (conn) conn.release();
   }
 });
 
@@ -150,6 +148,50 @@ route.get("/all-customizations", Authtoken, async (req, res) => {
     console.error("❌ Error in /all-customizations:", error);
     return res.status(500).json({
       message: "Server error while fetching customizations.",
+      error: error.sqlMessage || error.message,
+    });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+// =====================
+// DELETE /:id - Delete Customization
+// =====================
+route.delete("/:id", Authtoken, async (req, res) => {
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    const { id } = req.params;
+
+    // Find the customization
+    const [rows] = await conn.query("SELECT * FROM customizations WHERE id = ?", [id]);
+    if (!rows.length) {
+      return res.status(404).json({ message: "Customization not found." });
+    }
+
+    const customization = rows[0];
+
+    // Delete preview from Cloudinary
+    if (customization.preview_image_url) {
+      try {
+        const urlParts = customization.preview_image_url.split("/");
+        const folderAndFile = urlParts.slice(-2).join("/"); // e.g. "customizations/abc123.jpg"
+        const publicId = folderAndFile.split(".")[0]; // remove extension
+        await cloudinary.uploader.destroy(publicId);
+      } catch (cloudErr) {
+        console.warn("⚠️ Failed to delete Cloudinary preview:", cloudErr.message);
+      }
+    }
+
+    // Delete DB record
+    await conn.query("DELETE FROM customizations WHERE id = ?", [id]);
+
+    return res.status(200).json({ message: "✅ Customization deleted successfully." });
+  } catch (error) {
+    console.error("❌ Error deleting customization:", error);
+    return res.status(500).json({
+      message: "Server error while deleting customization.",
       error: error.sqlMessage || error.message,
     });
   } finally {
