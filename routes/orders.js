@@ -59,16 +59,24 @@ router.post("/new", authenticateToken, async (req, res) => {
     }
 
     // ✅ Insert orders
-    for (const item of cart) {
-      const orderId = nanoid(10);
-      const itemTotal = (parseFloat(item.price) * item.quantity).toFixed(2);
+   for (const item of cart) {
+  const orderId = nanoid(10);
+  const price = Number(item.price) || 0;
+  const qty = Number(item.quantity) || 0;
+  const itemTotal = (price * qty).toFixed(2);
 
-      await promiseConn.query(
-        `INSERT INTO orders (id, user_id, customizations_id, org_id, status, total_amount)
-         VALUES (?, ?, ?, ?, 'Pending', ?)`,
-        [orderId, user.id, item.id, user.org_id, itemTotal]
-      );
-    }
+  if (isNaN(itemTotal)) {
+    console.warn("⚠️ Skipping invalid cart item:", item);
+    continue;
+  }
+
+  await promiseConn.query(
+    `INSERT INTO orders (id, user_id, customizations_id, org_id, status, total_amount)
+     VALUES (?, ?, ?, ?, 'Pending', ?)`,
+    [orderId, user.id, item.id, user.org_id, itemTotal]
+  );
+}
+
 
     const orderBatchId = "ORD-" + Date.now();
 
