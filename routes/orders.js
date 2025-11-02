@@ -17,6 +17,8 @@ router.post("/new", authenticateToken, async (req, res) => {
   try {
     const { user, cart, totalAmount, shipping_address_id, billing_address_id } = req.body;
 
+    console.log(user, cart,totalAmount, shipping_address_id, billing_address_id);
+
     // ✅ Validate user
     if (!user?.id || !user?.email || !user?.org_id) {
       return res.status(401).json({
