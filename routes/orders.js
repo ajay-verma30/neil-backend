@@ -74,24 +74,9 @@ router.get("/my-orders", authenticateToken, async (req, res) => {
     const userId = req.user.id;
 
     const [orders] = await promiseConn.query(
-      `
-      SELECT 
-        o.*,
-        GROUP_CONCAT(DISTINCT c.preview_image_url) AS preview_images
-      FROM orders o
-      LEFT JOIN JSON_TABLE(
-        o.customizations_id,
-        "$[*]" COLUMNS (custom_id VARCHAR(15) PATH "$")
-      ) AS j ON TRUE
-      LEFT JOIN customizations c ON c.id = j.custom_id
-      WHERE o.user_id = ?
-      GROUP BY o.id
-      ORDER BY o.created_at DESC;
-      `,
+      "SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC",
       [userId]
     );
-
-    // parse JSON columns safely
     const safeParse = (data) => {
       if (!data) return [];
       if (Array.isArray(data)) return data;
@@ -102,31 +87,25 @@ router.get("/my-orders", authenticateToken, async (req, res) => {
           .toString()
           .replace(/[\[\]\"]/g, "")
           .split(",")
-          .map((s) => s.trim())
+          .map(s => s.trim())
           .filter(Boolean);
       }
     };
 
-    const formattedOrders = orders.map((order) => ({
+    const formattedOrders = orders.map(order => ({
       ...order,
       cart_id: safeParse(order.cart_id),
-      customizations_id: safeParse(order.customizations_id),
-      preview_images: order.preview_images
-        ? order.preview_images.split(",")
-        : [],
+      customizations_id: safeParse(order.customizations_id)
     }));
 
     res.json({
       success: true,
       count: formattedOrders.length,
-      orders: formattedOrders,
+      orders: formattedOrders
     });
   } catch (err) {
-    console.error("❌ Error fetching orders:", err);
-    res.status(500).json({
-      success: false,
-      message: "Internal server error",
-    });
+    console.error("Error fetching orders:", err);
+    res.status(500).json({ success: false, message: "Internal server error" });
   }
 });
 
