@@ -196,33 +196,90 @@ route.patch("/:id/status", Authtoken, authorizeRoles("Super Admin"), async (req,
 
 // ✅ Delete organization (Super Admin only)
 route.delete("/:id", Authtoken, authorizeRoles("Super Admin"), async (req, res) => {
+  const conn = await promisePool.getConnection();
   try {
     const { id } = req.params;
-    if (!id)
-      return res
-        .status(400)
-        .json({ success: false, message: "Organization ID required." });
+    if (!id) {
+      conn.release();
+      return res.status(400).json({
+        success: false,
+        message: "Organization ID required.",
+      });
+    }
 
-    const [result] = await promisePool.query(
-      "DELETE FROM organizations WHERE id = ?",
+    await conn.beginTransaction();
+
+    // ✅ 1. Delete product images (child of products)
+    await conn.query(
+      `
+      DELETE pi FROM product_images pi
+      JOIN products p ON pi.product_id = p.id
+      WHERE p.org_id = ?
+      `,
       [id]
     );
 
+    // ✅ 2. Delete product variants if they exist
+    await conn.query(
+      `
+      DELETE pv FROM product_variants pv
+      JOIN products p ON pv.product_id = p.id
+      WHERE p.org_id = ?
+      `,
+      [id]
+    );
+
+    // ✅ 3. Delete customizations linked to products under this org
+    await conn.query(
+      `
+      DELETE c FROM customizations c
+      JOIN product_variants pv ON c.product_variant_id = pv.id
+      JOIN products p ON pv.product_id = p.id
+      WHERE p.org_id = ?
+      `,
+      [id]
+    );
+
+    // ✅ 4. Delete logos belonging to this org
+    await conn.query("DELETE FROM logos WHERE org_id = ?", [id]);
+
+    // ✅ 5. Delete products under this org
+    await conn.query("DELETE FROM products WHERE org_id = ?", [id]);
+
+    // ✅ 6. Delete orders linked to this org
+    await conn.query("DELETE FROM orders WHERE org_id = ?", [id]);
+
+    // ✅ 7. Delete users under this org
+    await conn.query("DELETE FROM users WHERE org_id = ?", [id]);
+
+    // ✅ 8. Finally delete organization
+    const [result] = await conn.query("DELETE FROM organizations WHERE id = ?", [id]);
+
     if (result.affectedRows === 0) {
+      await conn.rollback();
+      conn.release();
       return res
         .status(404)
         .json({ success: false, message: "Organization not found." });
     }
 
-    res
-      .status(200)
-      .json({ success: true, message: "Organization deleted successfully." });
+    await conn.commit();
+    res.status(200).json({
+      success: true,
+      message: "✅ Organization and all related data deleted successfully.",
+    });
   } catch (e) {
+    await conn.rollback();
     console.error("❌ Error deleting organization:", e);
-    res
-      .status(500)
-      .json({ success: false, message: "Internal Server Error", error: e.message });
+    res.status(500).json({
+      success: false,
+      message: "Internal Server Error while deleting organization.",
+      error: e.message,
+    });
+  } finally {
+    conn.release();
   }
 });
+
 
 module.exports = route;
