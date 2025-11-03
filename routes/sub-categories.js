@@ -19,34 +19,45 @@ route.post("/new", Authtoken, async (req, res) => {
     const createdAt = getCurrentMysqlDatetime();
     const { title, category, org_id } = req.body;
     const user = req.user;
+
+    // ✅ Required fields check
     if (!title || !category) {
       return res.status(400).json({
         message: "Both 'title' and 'category' are required.",
       });
     }
+
+    // ✅ Determine which org_id to use
     let orgIdValue = null;
+
     if (user.role === "Super Admin") {
+      // Super Admin can assign to any org or leave null
       orgIdValue = org_id || null;
     } else {
-      if (!org_id)
+      // Non–Super Admins can only create for their own org
+      if (!org_id) {
         return res.status(400).json({
           message: "'org_id' is required for non–Super Admin users.",
         });
-      if (Number(org_id) !== Number(user.org_id))
+      }
+
+      if (String(org_id) !== String(user.org_id)) {
         return res.status(403).json({
           message: "You are not authorized to create sub-categories for another organization.",
         });
+      }
 
-      orgIdValue = user.org_id;
+      orgIdValue = user.org_id; // ✅ force user's org_id
     }
+
+    // ✅ Check for duplicate sub-category
     const [existing] = await conn.query(
       `SELECT id 
        FROM sub_categories 
        WHERE title = ? 
          AND category = ? 
          AND (
-           (org_id IS NULL AND ? IS NULL) OR 
-           org_id = ?
+           (org_id IS NULL AND ? IS NULL) OR org_id = ?
          )`,
       [title, category, orgIdValue, orgIdValue]
     );
@@ -56,6 +67,8 @@ route.post("/new", Authtoken, async (req, res) => {
         message: `Sub-category '${title}' already exists in '${category}'.`,
       });
     }
+
+    // ✅ Insert the new sub-category
     const [insertResult] = await conn.query(
       "INSERT INTO sub_categories (title, category, org_id, created_at) VALUES (?, ?, ?, ?)",
       [title, category, orgIdValue, createdAt]
