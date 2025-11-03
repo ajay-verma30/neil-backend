@@ -114,8 +114,7 @@ router.get("/all-orders", authenticateToken, async (req, res) => {
   try {
     const { role, org_id } = req.user;
 
-    let query = `
-      SELECT 
+    let query = `SELECT 
   o.id,
   o.order_batch_id,
   o.status,
@@ -149,10 +148,10 @@ router.get("/all-orders", authenticateToken, async (req, res) => {
   u.l_name,
   u.email,
 
-  -- Cart item images (from cart_items)
+  -- Cart item images
   JSON_ARRAYAGG(ci.image) AS cart_images,
 
-  -- Customization details in separate columns
+  -- Customization details
   GROUP_CONCAT(DISTINCT c.id) AS customization_ids,
   GROUP_CONCAT(DISTINCT c.preview_image_url) AS customization_images,
   GROUP_CONCAT(DISTINCT c.product_variant_id) AS customization_product_variants,
@@ -161,12 +160,9 @@ router.get("/all-orders", authenticateToken, async (req, res) => {
   GROUP_CONCAT(DISTINCT c.created_at) AS customization_created_dates
 
 FROM orders o
-JOIN addresses sa 
-  ON o.shipping_address_id = sa.id
-JOIN addresses ba 
-  ON o.billing_address_id = ba.id
-JOIN users u 
-  ON o.user_id = u.id
+JOIN addresses sa ON o.shipping_address_id = sa.id
+JOIN addresses ba ON o.billing_address_id = ba.id
+JOIN users u ON o.user_id = u.id
 
 -- Expand JSON arrays for cart items
 LEFT JOIN JSON_TABLE(
