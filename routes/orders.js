@@ -186,6 +186,32 @@ router.get("/all-orders", authenticateToken, async (req, res) => {
   }
 });
 
+router.get("/:id", authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const [rows] = await promiseConn.query(
+      "SELECT * FROM orders WHERE id = ?",
+      [id]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ message: "No order found with this ID" });
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: rows[0],
+    });
+  } catch (err) {
+    console.error("Error fetching order:", err);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+});
+
 
 
 module.exports = router;
