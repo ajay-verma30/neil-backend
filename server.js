@@ -27,6 +27,7 @@ app.use(cors({
     }
   },
   credentials: true,
+  origin: "https://neil-admin.vercel.app", 
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
   allowedHeaders: ["Content-Type", "Authorization"],
 }));
