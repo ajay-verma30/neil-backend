@@ -260,6 +260,14 @@ route.delete("/:id", Authtoken, authorizeRoles("Super Admin"), async (req, res) 
       JOIN users u ON a.user_id = u.id
       WHERE u.org_id = ?`, [id]);
 
+      // ✅ Delete customizations created by users in this organization
+await conn.query(`
+  DELETE c FROM customizations c
+  JOIN users u ON c.user_id = u.id
+  WHERE u.org_id = ?`, 
+  [id]
+);
+
     // ✅ 11. Delete users
     await conn.query(`DELETE FROM users WHERE org_id = ?`, [id]);
 
