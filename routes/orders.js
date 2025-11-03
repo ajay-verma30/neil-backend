@@ -572,7 +572,7 @@ if (requester.role !== "Super Admin") {
 
   let conn;
   try {
-    conn = await pool.getConnection();
+conn = await promiseConn.getConnection();
     await conn.beginTransaction();
 
     const [existingOrder] = await conn.query(
