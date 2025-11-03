@@ -308,6 +308,78 @@ for (let i = 0; i < cart.length; i++) {
 });
 
 
+//summary
+router.get("/order-summary", authenticateToken, async (req, res) => {
+  try {
+    const { role, org_id } = req.user;
+    const { org_id: queryOrg, timeframe } = req.query;
+    if (!["Super Admin", "Admin", "Manager"].includes(role)) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied.",
+      });
+    }
+    let conditions = [];
+    let params = [];
+    if (role === "Super Admin") {
+      if (queryOrg) {
+        conditions.push("org_id = ?");
+        params.push(queryOrg);
+      }
+    } else {
+      conditions.push("org_id = ?");
+      params.push(org_id);
+    }
+    if (timeframe) {
+      switch (timeframe) {
+        case "day":
+          conditions.push("DATE(created_at) = CURDATE()");
+          break;
+        case "week":
+          conditions.push("YEARWEEK(created_at, 1) = YEARWEEK(CURDATE(), 1)");
+          break;
+        case "month":
+          conditions.push(
+            "MONTH(created_at) = MONTH(CURDATE()) AND YEAR(created_at) = YEAR(CURDATE())"
+          );
+          break;
+        case "year":
+          conditions.push("YEAR(created_at) = YEAR(CURDATE())");
+          break;
+      }
+    }
+
+    const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+
+    // 🧮 Query total orders
+    const [totalOrdersResult] = await promiseConn.query(
+      `
+      SELECT COUNT(*) AS total_orders
+      FROM orders ${whereClause}
+      `,
+      params
+    );
+
+    const totalOrders = totalOrdersResult[0]?.total_orders || 0;
+
+    // ✅ Send response
+    res.json({
+      success: true,
+      data: {
+        total_orders: totalOrders,
+      },
+    });
+  } catch (err) {
+    console.error("❌ Error fetching order summary:", err);
+    res.status(500).json({
+      success: false,
+      message: "Server error while fetching order summary.",
+    });
+  }
+});
+
+
+
 
 
 
