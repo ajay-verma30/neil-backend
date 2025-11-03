@@ -6,9 +6,10 @@ const cookieParser = require("cookie-parser");
 const path = require('path')
 const authRoutes = require("./routes/authRoutes");
 
-
+app.set('trust proxy', 1);
 app.use(cookieParser());
 app.use(express.json());
+
 const allowedOrigins = [
   "http://localhost:3002",
   "http://localhost:3001", 
@@ -36,7 +37,7 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.get('/', (req,res)=>{
     res.status(200).json({message:"Working"});
 })
-app.set('trust proxy', 1);
+
 app.use('/organization',require('./routes/organizations'))
 app.use('/users',require('./routes/users'))
 app.use('/groups',require('./routes/groups'))
