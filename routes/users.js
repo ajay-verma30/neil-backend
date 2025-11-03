@@ -3,7 +3,7 @@ const route = express.Router();
 const { nanoid } = require("nanoid");
 const bcrypt = require("bcryptjs");
 const mysqlconnect = require("../db/conn");
-const pool = mysqlconnect().promise(); // Use 'pool' for promise-based operations
+const pool = mysqlconnect().promise();
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
 const rateLimit = require("express-rate-limit");
@@ -15,15 +15,12 @@ const { sendEmail } = require("./mailer");
 
 const upload = multer({ storage: multer.memoryStorage() });
 
-// 🔐 Secrets
 const ACCESS_SECRET = process.env.JWT_SECRET;
 const REFRESH_SECRET = process.env.JWT_REFRESH_SECRET;
 
-// 🕒 MySQL DATETIME helper
 const getCurrentMysqlDatetime = () =>
   new Date().toISOString().slice(0, 19).replace("T", " ");
 
-// 🧩 Rate Limit (login)
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10,
@@ -98,7 +95,7 @@ route.post("/super-admin", async (req, res) => {
         .status(400)
         .json({ success: false, message: "All fields are required." });
 
-    conn = await promisePool.getConnection();
+    conn = await pool.getConnection();
     await conn.beginTransaction();
 
     const [exists] = await conn.query(
