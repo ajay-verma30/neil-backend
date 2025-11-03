@@ -67,4 +67,34 @@ router.post("/create", authenticateToken, async (req, res) => {
   }
 });
 
+
+
+router.get("/my-orders", authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const [orders] = await promiseConn.query(
+      "SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC",
+      [userId]
+    );
+
+    const formattedOrders = orders.map(order => ({
+      ...order,
+      cart_id: order.cart_id ? JSON.parse(order.cart_id) : [],
+      customizations_id: order.customizations_id
+        ? JSON.parse(order.customizations_id)
+        : []
+    }));
+
+    res.json({
+      success: true,
+      count: formattedOrders.length,
+      orders: formattedOrders
+    });
+  } catch (err) {
+    console.error("Error fetching orders:", err);
+    res.status(500).json({ success: false, message: "Internal server error" });
+  }
+});
+
 module.exports = router;
