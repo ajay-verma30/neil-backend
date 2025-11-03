@@ -11,9 +11,9 @@ const authenticateToken = require("../Auth/tokenAuthentication");
 // -----------------------------------------------------
 route.post("/add", authenticateToken, async (req, res) => {
   try {
-    const { user_id, product_id, title, image, quantity, sizes, total_price } = req.body;
+    const { user_id, product_id, title, image,customizations_id, quantity, sizes, total_price } = req.body;
 
-    if (!user_id || !product_id || !title || !total_price) {
+    if (!user_id || !product_id || !customizations_id || !title || !total_price) {
       return res.status(400).json({ message: "Missing required fields." });
     }
 
@@ -21,14 +21,15 @@ route.post("/add", authenticateToken, async (req, res) => {
 
     const [result] = await pool.query(
       `INSERT INTO cart_items 
-        (id, user_id, product_id, title, image, quantity, sizes, total_price, ordered) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, FALSE)`,
+        (id, user_id, product_id, title, image,customizations_id, quantity, sizes, total_price, ordered) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?,?, FALSE)`,
       [
         id,
         user_id,
         product_id,
         title,
         image,
+        customizations_id,
         quantity,
         JSON.stringify(sizes),
         total_price,
