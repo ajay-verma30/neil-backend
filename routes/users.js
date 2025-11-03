@@ -283,11 +283,12 @@ route.post("/login", loginLimiter, async (req, res) => {
 
     // 🍪 Set secure HTTP-only cookie
     res.cookie("refreshToken", refreshToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production", // true in production (HTTPS only)
-      sameSite: "strict",
-      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-    });
+  httpOnly: true,
+  secure: process.env.NODE_ENV === "production", // keep for HTTPS
+  sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+  maxAge: 7 * 24 * 60 * 60 * 1000,
+});
+
 
     // ✅ Send success response
     return res.status(200).json({
