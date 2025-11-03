@@ -17,6 +17,7 @@ router.post("/create", authenticateToken, async (req, res) => {
     await conn.beginTransaction();
 
     const userId = req.user.id;
+    const org_id = req.user.org_id;
     const { shipping_address_id, billing_address_id, payment_method } = req.body;
     const [cartItems] = await conn.query(
       "SELECT * FROM cart_items WHERE user_id = ? AND ordered = 0",
@@ -53,7 +54,7 @@ router.post("/create", authenticateToken, async (req, res) => {
       [
         orderId,
         userId,
-        "ORG001",
+        org_id,
         batchId,
         shipping_address_id,
         billing_address_id,
