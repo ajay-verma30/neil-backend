@@ -201,15 +201,14 @@ route.delete("/:id", Authtoken, authorizeRoles("Super Admin"), async (req, res) 
     const { id } = req.params;
     if (!id) {
       conn.release();
-      return res.status(400).json({
-        success: false,
-        message: "Organization ID required.",
-      });
+      return res
+        .status(400)
+        .json({ success: false, message: "Organization ID required." });
     }
 
     await conn.beginTransaction();
 
-    // ✅ 1. Delete product images (child of products)
+    // ✅ Delete product images
     await conn.query(
       `
       DELETE pi FROM product_images pi
@@ -219,7 +218,7 @@ route.delete("/:id", Authtoken, authorizeRoles("Super Admin"), async (req, res) 
       [id]
     );
 
-    // ✅ 2. Delete product variants if they exist
+    // ✅ Delete product variants
     await conn.query(
       `
       DELETE pv FROM product_variants pv
@@ -229,7 +228,7 @@ route.delete("/:id", Authtoken, authorizeRoles("Super Admin"), async (req, res) 
       [id]
     );
 
-    // ✅ 3. Delete customizations linked to products under this org
+    // ✅ Delete customizations
     await conn.query(
       `
       DELETE c FROM customizations c
@@ -240,19 +239,39 @@ route.delete("/:id", Authtoken, authorizeRoles("Super Admin"), async (req, res) 
       [id]
     );
 
-    // ✅ 4. Delete logos belonging to this org
+    // ✅ Delete logos
     await conn.query("DELETE FROM logos WHERE org_id = ?", [id]);
 
-    // ✅ 5. Delete products under this org
+    // ✅ Delete products
     await conn.query("DELETE FROM products WHERE org_id = ?", [id]);
 
-    // ✅ 6. Delete orders linked to this org
+    // ✅ Delete orders
     await conn.query("DELETE FROM orders WHERE org_id = ?", [id]);
 
-    // ✅ 7. Delete users under this org
+    // ✅ Delete user_refresh_tokens before users
+    await conn.query(
+      `
+      DELETE urt FROM user_refresh_tokens urt
+      JOIN users u ON urt.user_id = u.id
+      WHERE u.org_id = ?
+      `,
+      [id]
+    );
+
+    // ✅ Delete password reset tokens (optional cleanup)
+    await conn.query(
+      `
+      DELETE prt FROM password_reset_tokens prt
+      JOIN users u ON prt.user_id = u.id
+      WHERE u.org_id = ?
+      `,
+      [id]
+    );
+
+    // ✅ Delete users
     await conn.query("DELETE FROM users WHERE org_id = ?", [id]);
 
-    // ✅ 8. Finally delete organization
+    // ✅ Finally delete organization
     const [result] = await conn.query("DELETE FROM organizations WHERE id = ?", [id]);
 
     if (result.affectedRows === 0) {
@@ -280,6 +299,7 @@ route.delete("/:id", Authtoken, authorizeRoles("Super Admin"), async (req, res) 
     conn.release();
   }
 });
+
 
 
 module.exports = route;
