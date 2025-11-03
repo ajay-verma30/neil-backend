@@ -282,8 +282,8 @@ route.post("/login", loginLimiter, async (req, res) => {
     res.cookie("refreshToken", refreshToken, {
   httpOnly: true,
   secure: process.env.NODE_ENV === "production", // keep for HTTPS
-  sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-  maxAge: 7 * 24 * 60 * 60 * 1000,
+  sameSite: 'None',
+  maxAge: 7 * 24 * 60 * 60 * 1000,//7 days
 });
 
 
