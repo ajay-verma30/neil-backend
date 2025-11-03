@@ -208,78 +208,71 @@ route.delete("/:id", Authtoken, authorizeRoles("Super Admin"), async (req, res) 
 
     await conn.beginTransaction();
 
-    // ✅ Delete product images
-    await conn.query(
-      `
+    // ✅ 1. Delete product images
+    await conn.query(`
       DELETE pi FROM product_images pi
       JOIN products p ON pi.product_id = p.id
-      WHERE p.org_id = ?
-      `,
-      [id]
-    );
+      WHERE p.org_id = ?`, [id]);
 
-    // ✅ Delete product variants
-    await conn.query(
-      `
+    // ✅ 2. Delete product variants
+    await conn.query(`
       DELETE pv FROM product_variants pv
       JOIN products p ON pv.product_id = p.id
-      WHERE p.org_id = ?
-      `,
-      [id]
-    );
+      WHERE p.org_id = ?`, [id]);
 
-    // ✅ Delete customizations
-    await conn.query(
-      `
+    // ✅ 3. Delete customizations
+    await conn.query(`
       DELETE c FROM customizations c
       JOIN product_variants pv ON c.product_variant_id = pv.id
       JOIN products p ON pv.product_id = p.id
-      WHERE p.org_id = ?
-      `,
-      [id]
-    );
+      WHERE p.org_id = ?`, [id]);
 
-    // ✅ Delete logos
-    await conn.query("DELETE FROM logos WHERE org_id = ?", [id]);
+    // ✅ 4. Delete logos
+    await conn.query(`DELETE FROM logos WHERE org_id = ?`, [id]);
 
-    // ✅ Delete products
-    await conn.query("DELETE FROM products WHERE org_id = ?", [id]);
+    // ✅ 5. Delete products
+    await conn.query(`DELETE FROM products WHERE org_id = ?`, [id]);
 
-    // ✅ Delete orders
-    await conn.query("DELETE FROM orders WHERE org_id = ?", [id]);
+    // ✅ 6. Delete orders
+    await conn.query(`DELETE FROM orders WHERE org_id = ?`, [id]);
 
-    // ✅ Delete user_refresh_tokens before users
-    await conn.query(
-      `
+    // ✅ 7. Delete user_refresh_tokens
+    await conn.query(`
       DELETE urt FROM user_refresh_tokens urt
       JOIN users u ON urt.user_id = u.id
-      WHERE u.org_id = ?
-      `,
-      [id]
-    );
+      WHERE u.org_id = ?`, [id]);
 
-    // ✅ Delete password reset tokens (optional cleanup)
-    await conn.query(
-      `
+    // ✅ 8. Delete password_reset_tokens
+    await conn.query(`
       DELETE prt FROM password_reset_tokens prt
       JOIN users u ON prt.user_id = u.id
-      WHERE u.org_id = ?
-      `,
-      [id]
-    );
+      WHERE u.org_id = ?`, [id]);
 
-    // ✅ Delete users
-    await conn.query("DELETE FROM users WHERE org_id = ?", [id]);
+    // ✅ 9. Delete cart_items for all users in this org
+    await conn.query(`
+      DELETE ci FROM cart_items ci
+      JOIN users u ON ci.user_id = u.id
+      WHERE u.org_id = ?`, [id]);
 
-    // ✅ Finally delete organization
-    const [result] = await conn.query("DELETE FROM organizations WHERE id = ?", [id]);
+    // ✅ 10. Delete addresses of users
+    await conn.query(`
+      DELETE a FROM addresses a
+      JOIN users u ON a.user_id = u.id
+      WHERE u.org_id = ?`, [id]);
+
+    // ✅ 11. Delete users
+    await conn.query(`DELETE FROM users WHERE org_id = ?`, [id]);
+
+    // ✅ 12. Finally delete the organization
+    const [result] = await conn.query(`DELETE FROM organizations WHERE id = ?`, [id]);
 
     if (result.affectedRows === 0) {
       await conn.rollback();
       conn.release();
-      return res
-        .status(404)
-        .json({ success: false, message: "Organization not found." });
+      return res.status(404).json({
+        success: false,
+        message: "Organization not found.",
+      });
     }
 
     await conn.commit();
