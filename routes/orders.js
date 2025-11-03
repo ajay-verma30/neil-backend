@@ -14,102 +14,130 @@ const promiseConn = pool.promise();
  * 🛒 CREATE NEW ORDER
  */
 
-router.post("/new", authenticateToken, async (req, res) => {
+// router.post("/new", authenticateToken, async (req, res) => {
+//   const connection = await pool.getConnection();
+//   try {
+//     const {
+//       user_id,
+//       org_id,
+//       shipping_address_id,
+//       billing_address_id,
+//       payment_method = null,
+//     } = req.body;
+
+//     // ✅ Basic validations
+//     if (!user_id || !org_id || !shipping_address_id || !billing_address_id) {
+//       return res.status(400).json({ message: "Missing required fields." });
+//     }
+
+//     // ✅ Fetch cart items for the user
+//     const [cartItems] = await connection.query(
+//       `SELECT * FROM cart_items WHERE user_id = ? AND ordered = FALSE`,
+//       [user_id]
+//     );
+
+//     if (!cartItems.length) {
+//       return res.status(400).json({ message: "No items in cart." });
+//     }
+
+//     // ✅ Compute total
+//     const totalAmount = cartItems
+//       .reduce((sum, item) => sum + parseFloat(item.total_price || 0), 0)
+//       .toFixed(2);
+
+//     // ✅ Begin transaction
+//     await connection.beginTransaction();
+
+//     // ✅ Create order entry
+//     const orderId = nanoid(12);
+//     const orderBatchId = "ORD-" + Date.now();
+
+//     await connection.query(
+//       `INSERT INTO orders (
+//         id, user_id, org_id, order_batch_id, 
+//         shipping_address_id, billing_address_id, 
+//         status, total_amount, payment_status, payment_method
+//       ) VALUES (?, ?, ?, ?, ?, ?, 'Pending', ?, 'Unpaid', ?)`,
+//       [
+//         orderId,
+//         user_id,
+//         org_id,
+//         orderBatchId,
+//         shipping_address_id,
+//         billing_address_id,
+//         totalAmount,
+//         payment_method,
+//       ]
+//     );
+
+//     // ✅ Insert all order items
+//     for (const item of cartItems) {
+//       const unitPrice = parseFloat(item.total_price) / (item.quantity || 1);
+
+//       await connection.query(
+//         `INSERT INTO order_items (
+//           order_id, cart_item_id, customizations_id, 
+//           product_title, image_url, unit_price, quantity, sizes
+//         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+//         [
+//           orderId,
+//           item.id,
+//           item.customizations_id,
+//           item.title,
+//           item.image,
+//           unitPrice.toFixed(2),
+//           item.quantity || 1,
+//           JSON.stringify(item.sizes || {}),
+//         ]
+//       );
+//     }
+
+//     // ✅ Mark cart items as ordered
+//     await connection.query(
+//       `UPDATE cart_items SET ordered = TRUE WHERE user_id = ?`,
+//       [user_id]
+//     );
+
+//     // ✅ Commit transaction
+//     await connection.commit();
+
+//     res.status(201).json({
+//       success: true,
+//       message: "Order created successfully.",
+//       order_id: orderId,
+//       order_batch_id: orderBatchId,
+//       total: totalAmount,
+//       items: cartItems.length,
+//     });
+//   } catch (error) {
+//     console.error("❌ Order creation failed:", error);
+//     await connection.rollback();
+//     res
+//       .status(500)
+//       .json({ success: false, message: "Failed to create order.", error: error.message });
+//   } finally {
+//     connection.release();
+//   }
+// });
+
+
+router.post("/new", authenticateToken, async(req,res)=>{
   const connection = await pool.getConnection();
-  try {
-    const {
-      user_id,
-      org_id,
-      shipping_address_id,
-      billing_address_id,
-      payment_method = null,
-    } = req.body;
+  try{
+    const id = nanoid(17);
+    const {user_id} = req.body;
+//const {user_id, org_id, shipping_address_id, billing_address_id} = req.body;
+    // if(!user_id || !org_id || !shipping_address_id || !billing_address_id){
+    //   return res.status(400).json({message:"Missing required fields"});
+    // }
 
-    // ✅ Basic validations
-    if (!user_id || !org_id || !shipping_address_id || !billing_address_id) {
-      return res.status(400).json({ message: "Missing required fields." });
+    const [cart_items] = await connection.query(`SELECT * FROM cart_items WHERE user_id = ? AND ordered = FALSE`,[user_id]);
+    if(cart_items.length === 0){
+      return res.status(400).json({message:"No items in the cart yet."});
     }
-
-    // ✅ Fetch cart items for the user
-    const [cartItems] = await connection.query(
-      `SELECT * FROM cart_items WHERE user_id = ? AND ordered = FALSE`,
-      [user_id]
-    );
-
-    if (!cartItems.length) {
-      return res.status(400).json({ message: "No items in cart." });
-    }
-
-    // ✅ Compute total
-    const totalAmount = cartItems
-      .reduce((sum, item) => sum + parseFloat(item.total_price || 0), 0)
-      .toFixed(2);
-
-    // ✅ Begin transaction
-    await connection.beginTransaction();
-
-    // ✅ Create order entry
-    const orderId = nanoid(12);
-    const orderBatchId = "ORD-" + Date.now();
-
-    await connection.query(
-      `INSERT INTO orders (
-        id, user_id, org_id, order_batch_id, 
-        shipping_address_id, billing_address_id, 
-        status, total_amount, payment_status, payment_method
-      ) VALUES (?, ?, ?, ?, ?, ?, 'Pending', ?, 'Unpaid', ?)`,
-      [
-        orderId,
-        user_id,
-        org_id,
-        orderBatchId,
-        shipping_address_id,
-        billing_address_id,
-        totalAmount,
-        payment_method,
-      ]
-    );
-
-    // ✅ Insert all order items
-    for (const item of cartItems) {
-      const unitPrice = parseFloat(item.total_price) / (item.quantity || 1);
-
-      await connection.query(
-        `INSERT INTO order_items (
-          order_id, cart_item_id, customizations_id, 
-          product_title, image_url, unit_price, quantity, sizes
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          orderId,
-          item.id,
-          item.customizations_id,
-          item.title,
-          item.image,
-          unitPrice.toFixed(2),
-          item.quantity || 1,
-          JSON.stringify(item.sizes || {}),
-        ]
-      );
-    }
-
-    // ✅ Mark cart items as ordered
-    await connection.query(
-      `UPDATE cart_items SET ordered = TRUE WHERE user_id = ?`,
-      [user_id]
-    );
-
-    // ✅ Commit transaction
-    await connection.commit();
-
-    res.status(201).json({
-      success: true,
-      message: "Order created successfully.",
-      order_id: orderId,
-      order_batch_id: orderBatchId,
-      total: totalAmount,
-      items: cartItems.length,
-    });
-  } catch (error) {
+    return res.status(200).json({data: cart_items});
+  }
+  catch (error) {
     console.error("❌ Order creation failed:", error);
     await connection.rollback();
     res
@@ -118,8 +146,7 @@ router.post("/new", authenticateToken, async (req, res) => {
   } finally {
     connection.release();
   }
-});
-
+})
 
 
 
