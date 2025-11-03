@@ -133,51 +133,10 @@ router.post("/create", authenticateToken, async (req, res) => {
   }
 });
 
-
-router.get("/my-orders", authenticateToken, async (req, res) => {
-  try {
-    const userId = req.user.id;
-
-    const [orders] = await promiseConn.query(
-      "SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC",
-      [userId]
-    );
-    const safeParse = (data) => {
-      if (!data) return [];
-      if (Array.isArray(data)) return data;
-      try {
-        return JSON.parse(data);
-      } catch {
-        return data
-          .toString()
-          .replace(/[\[\]\"]/g, "")
-          .split(",")
-          .map(s => s.trim())
-          .filter(Boolean);
-      }
-    };
-
-    const formattedOrders = orders.map(order => ({
-      ...order,
-      cart_id: safeParse(order.cart_id),
-      customizations_id: safeParse(order.customizations_id)
-    }));
-
-    res.json({
-      success: true,
-      count: formattedOrders.length,
-      orders: formattedOrders
-    });
-  } catch (err) {
-    console.error("Error fetching orders:", err);
-    res.status(500).json({ success: false, message: "Internal server error" });
-  }
-});
-
-
 router.get("/all-orders", authenticateToken, async (req, res) => {
   try {
     const { role, org_id } = req.user;
+
 
     let query = `
       SELECT 
@@ -249,6 +208,48 @@ router.get("/all-orders", authenticateToken, async (req, res) => {
       success: false,
       message: "Internal server error while fetching orders.",
     });
+  }
+});
+
+
+
+router.get("/my-orders", authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const [orders] = await promiseConn.query(
+      "SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC",
+      [userId]
+    );
+    const safeParse = (data) => {
+      if (!data) return [];
+      if (Array.isArray(data)) return data;
+      try {
+        return JSON.parse(data);
+      } catch {
+        return data
+          .toString()
+          .replace(/[\[\]\"]/g, "")
+          .split(",")
+          .map(s => s.trim())
+          .filter(Boolean);
+      }
+    };
+
+    const formattedOrders = orders.map(order => ({
+      ...order,
+      cart_id: safeParse(order.cart_id),
+      customizations_id: safeParse(order.customizations_id)
+    }));
+
+    res.json({
+      success: true,
+      count: formattedOrders.length,
+      orders: formattedOrders
+    });
+  } catch (err) {
+    console.error("Error fetching orders:", err);
+    res.status(500).json({ success: false, message: "Internal server error" });
   }
 });
 
