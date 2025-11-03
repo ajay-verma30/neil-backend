@@ -58,10 +58,18 @@ route.get("/:user_id", authenticateToken, async (req, res) => {
     );
 
     // parse sizes JSON for frontend
-    const cart = rows.map(item => ({
-      ...item,
-      sizes: item.sizes ? JSON.parse(item.sizes) : {},
-    }));
+    const cart = rows.map(item => {
+  let parsedSizes = {};
+  try {
+    parsedSizes =
+      typeof item.sizes === "string" ? JSON.parse(item.sizes) : item.sizes || {};
+  } catch {
+    parsedSizes = {};
+  }
+
+  return { ...item, sizes: parsedSizes };
+});
+
 
     res.status(200).json(cart);
   } catch (err) {
