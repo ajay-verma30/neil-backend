@@ -6,39 +6,46 @@ const mysqlconnect = require("../db/conn");
 const { nanoid } = require("nanoid");
 require("dotenv").config();
 
-// Database connection
+
 const pool = mysqlconnect();
 const promiseConn = pool.promise();
 
 router.post("/create", authenticateToken, async (req, res) => {
+  let conn;
   try {
+    conn = await promiseConn.getConnection();
+    await conn.beginTransaction();
+
     const userId = req.user.id;
     const { shipping_address_id, billing_address_id, payment_method } = req.body;
-    const [cartItems] = await promiseConn.query(
+    const [cartItems] = await conn.query(
       "SELECT * FROM cart_items WHERE user_id = ? AND ordered = 0",
       [userId]
     );
 
     if (!cartItems.length) {
-      return res.status(400).json({ success: false, message: "No items in cart." });
+      await conn.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "No items in cart.",
+      });
     }
     const cleanArray = (arr) =>
-  arr.map((id) => id?.replace(/['"\[\]]/g, "").trim()).filter(Boolean);
+      arr
+        .map((id) => id?.replace(/['"\\[\\]]/g, "").trim())
+        .filter(Boolean);
 
-const cartIds = cleanArray(cartItems.map((i) => i.id));
-const customizationIds = cleanArray(
-  cartItems.map((i) => i.customizations_id)
-);
+    const cartIds = cleanArray(cartItems.map((i) => i.id));
+    const customizationIds = cleanArray(cartItems.map((i) => i.customizations_id));
+
     const totalAmount = cartItems.reduce(
-      (sum, item) => sum + parseFloat(item.total_price),
+      (sum, item) => sum + parseFloat(item.total_price || 0),
       0
     );
 
-
-
     const orderId = "ORD-" + nanoid(8);
     const batchId = "BATCH-" + nanoid(6);
-    await promiseConn.query(
+    await conn.query(
       `INSERT INTO orders 
       (id, user_id, org_id, order_batch_id, shipping_address_id, billing_address_id, 
        total_amount, cart_id, customizations_id, status, payment_status, payment_method)
@@ -53,25 +60,76 @@ const customizationIds = cleanArray(
         totalAmount,
         JSON.stringify(cartIds),
         JSON.stringify(customizationIds),
-        payment_method
+        payment_method,
       ]
     );
-
     for (const item of cartItems) {
-      await promiseConn.query("UPDATE cart_items SET ordered = 1 WHERE id = ?", [item.id]);
+      await conn.query("UPDATE cart_items SET ordered = 1 WHERE id = ?", [item.id]);
     }
+    const [[user]] = await conn.query(
+      "SELECT f_name, l_name, email FROM users WHERE id = ?",
+      [userId]
+    );
+    const orderDetails = cartItems
+      .map(
+        (item) => `
+          <tr>
+            <td>${item.title}</td>
+            <td>${item.quantity}</td>
+            <td>$${item.total_price.toFixed(2)}</td>
+          </tr>
+        `
+      )
+      .join("");
+
+    const emailHtml = `
+      <h2>Order Confirmation - Neil Prints</h2>
+      <p>Hi ${user.f_name},</p>
+      <p>Thank you for your order! Your order <b>${orderId}</b> has been successfully placed.</p>
+      <table border="1" cellspacing="0" cellpadding="8" style="border-collapse: collapse; width:100%; margin-top:10px;">
+        <thead style="background:#f5f5f5;">
+          <tr>
+            <th align="left">Product</th>
+            <th align="center">Qty</th>
+            <th align="right">Subtotal</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${orderDetails}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td colspan="2" align="right"><b>Total:</b></td>
+            <td align="right"><b>$${totalAmount.toFixed(2)}</b></td>
+          </tr>
+        </tfoot>
+      </table>
+      <p style="margin-top:20px;">
+        <b>Payment Method:</b> ${payment_method}<br/>
+        <b>Status:</b> Pending
+      </p>
+      <p>We'll notify you when your order ships!</p>
+      <p>Thank you for choosing Neil Prints!</p>
+    `;
+    await sendEmail(user.email, `Order Confirmation - ${orderId}`, emailHtml);
+    await conn.commit();
     res.json({
       success: true,
-      message: "Order created successfully",
+      message: "Order created successfully. Confirmation email sent.",
       orderId,
-      totalAmount
+      totalAmount,
     });
   } catch (err) {
-    console.error("Error creating order:", err);
-    res.status(500).json({ success: false, message: "Internal server error" });
+    if (conn) await conn.rollback();
+    console.error("❌ Error creating order:", err);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error while creating order.",
+    });
+  } finally {
+    if (conn) conn.release();
   }
 });
-
 
 
 router.get("/my-orders", authenticateToken, async (req, res) => {
@@ -303,6 +361,131 @@ for (let i = 0; i < cart.length; i++) {
     res.status(500).json({
       success: false,
       message: "Internal server error"
+    });
+  }
+});
+
+router.get("/order-trends", authenticateToken, async (req, res) => {
+  try {
+    const { role, org_id } = req.user;
+    const { org_id: queryOrg, timeframe } = req.query;
+
+    if (!["Super Admin", "Admin", "Manager"].includes(role)) {
+      return res.status(403).json({ success: false, message: "Access denied." });
+    }
+
+    let conditions = [];
+    let params = [];
+
+    if (role === "Super Admin") {
+      if (queryOrg) {
+        conditions.push("org_id = ?");
+        params.push(queryOrg);
+      }
+    } else {
+      conditions.push("org_id = ?");
+      params.push(org_id);
+    }
+
+    // Timeframe grouping
+    let groupBy = "DATE(created_at)";
+    if (timeframe === "month") groupBy = "DATE_FORMAT(created_at, '%Y-%m-%d')";
+    if (timeframe === "year") groupBy = "MONTH(created_at)";
+
+    const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+
+    const [rows] = await promiseConn.query(
+      `
+      SELECT 
+        ${groupBy} AS period,
+        COUNT(*) AS total_orders
+      FROM orders
+      ${whereClause}
+      GROUP BY period
+      ORDER BY period ASC
+      `,
+      params
+    );
+
+    res.json({
+      success: true,
+      data: rows,
+    });
+  } catch (err) {
+    console.error("❌ Error fetching order trends:", err);
+    res.status(500).json({
+      success: false,
+      message: "Server error while fetching order trends.",
+    });
+  }
+});
+
+
+
+router.get("/order-status-summary", authenticateToken, async (req, res) => {
+  try {
+    const { role, org_id } = req.user;
+    const { org_id: queryOrg, timeframe } = req.query;
+
+    if (!["Super Admin", "Admin", "Manager"].includes(role)) {
+      return res.status(403).json({ success: false, message: "Access denied." });
+    }
+
+    let conditions = [];
+    let params = [];
+
+    if (role === "Super Admin") {
+      if (queryOrg) {
+        conditions.push("org_id = ?");
+        params.push(queryOrg);
+      }
+    } else {
+      conditions.push("org_id = ?");
+      params.push(org_id);
+    }
+
+    if (timeframe) {
+      switch (timeframe) {
+        case "day":
+          conditions.push("DATE(created_at) = CURDATE()");
+          break;
+        case "week":
+          conditions.push("YEARWEEK(created_at, 1) = YEARWEEK(CURDATE(), 1)");
+          break;
+        case "month":
+          conditions.push(
+            "MONTH(created_at) = MONTH(CURDATE()) AND YEAR(created_at) = YEAR(CURDATE())"
+          );
+          break;
+        case "year":
+          conditions.push("YEAR(created_at) = YEAR(CURDATE())");
+          break;
+      }
+    }
+
+    const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+
+    const [rows] = await promiseConn.query(
+      `
+      SELECT 
+        status,
+        COUNT(*) AS count
+      FROM orders
+      ${whereClause}
+      GROUP BY status
+      `,
+      params
+    );
+
+    res.json({
+      success: true,
+      data: rows,
+    });
+  } catch (err) {
+    console.error("❌ Error fetching order status summary:", err);
+    res.status(500).json({
+      success: false,
+      message: "Server error while fetching order status summary.",
     });
   }
 });
