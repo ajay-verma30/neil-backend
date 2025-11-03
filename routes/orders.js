@@ -13,166 +13,114 @@ const promiseConn = pool.promise();
 /**
  * 🛒 CREATE NEW ORDER
  */
+
 router.post("/new", authenticateToken, async (req, res) => {
+  const connection = await pool.getConnection();
   try {
-    const { user, cart, totalAmount, shipping_address_id, billing_address_id } = req.body;
+    const {
+      user_id,
+      org_id,
+      shipping_address_id,
+      billing_address_id,
+      payment_method = null,
+    } = req.body;
 
-    console.log(user, cart,totalAmount, shipping_address_id, billing_address_id);
-
-    // ✅ Validate user
-    if (!user?.id || !user?.email || !user?.org_id) {
-      return res.status(401).json({
-        success: false,
-        message: "Please login to continue checkout.",
-      });
+    // ✅ Basic validations
+    if (!user_id || !org_id || !shipping_address_id || !billing_address_id) {
+      return res.status(400).json({ message: "Missing required fields." });
     }
 
-    // ✅ Validate address IDs
-    if (!shipping_address_id || !billing_address_id) {
-      return res.status(400).json({
-        success: false,
-        message: "Shipping and billing address are required.",
-      });
-    }
-
-    // ✅ Validate cart
-    if (!Array.isArray(cart) || cart.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: "Cart is empty.",
-      });
-    }
-
-    // ✅ Verify total
-    const verifiedTotal = cart
-      .reduce((sum, item) => sum + parseFloat(item.unit_price || 0) * (item.quantity || 0), 0)
-      .toFixed(2);
-
-    if (parseFloat(verifiedTotal) !== parseFloat(totalAmount)) {
-      return res.status(400).json({
-        success: false,
-        message: "Total amount mismatch. Please refresh and try again.",
-      });
-    }
-
-    // ✅ Fetch customizations
-    const customizationIds = cart.map((item) => item.id);
-    const placeholders = customizationIds.map(() => "?").join(",");
-    const [customizations] = await promiseConn.query(
-      `SELECT id, preview_image_url FROM customizations WHERE id IN (${placeholders})`,
-      customizationIds
+    // ✅ Fetch cart items for the user
+    const [cartItems] = await connection.query(
+      `SELECT * FROM cart_items WHERE user_id = ? AND ordered = FALSE`,
+      [user_id]
     );
 
-    if (!customizations.length) {
-      return res.status(404).json({
-        success: false,
-        message: "No matching customizations found.",
-      });
+    if (!cartItems.length) {
+      return res.status(400).json({ message: "No items in cart." });
     }
 
-    // ✅ Create order entries for each item
-    for (const item of cart) {
-      const orderId = nanoid(10);
-      const price = Number(item.unit_price) || 0;
-      const qty = Number(item.quantity) || 0;
-      const itemTotal = (price * qty).toFixed(2);
+    // ✅ Compute total
+    const totalAmount = cartItems
+      .reduce((sum, item) => sum + parseFloat(item.total_price || 0), 0)
+      .toFixed(2);
 
-      if (isNaN(itemTotal)) {
-        console.warn("⚠️ Skipping invalid cart item:", item);
-        continue;
-      }
+    // ✅ Begin transaction
+    await connection.beginTransaction();
 
-      await promiseConn.query(
-        `INSERT INTO orders (
-            id, user_id, customizations_id, org_id, 
-            shipping_address_id, billing_address_id, 
-            status, total_amount
-         ) VALUES (?, ?, ?, ?, ?, ?, 'Pending', ?)`,
+    // ✅ Create order entry
+    const orderId = nanoid(12);
+    const orderBatchId = "ORD-" + Date.now();
+
+    await connection.query(
+      `INSERT INTO orders (
+        id, user_id, org_id, order_batch_id, 
+        shipping_address_id, billing_address_id, 
+        status, total_amount, payment_status, payment_method
+      ) VALUES (?, ?, ?, ?, ?, ?, 'Pending', ?, 'Unpaid', ?)`,
+      [
+        orderId,
+        user_id,
+        org_id,
+        orderBatchId,
+        shipping_address_id,
+        billing_address_id,
+        totalAmount,
+        payment_method,
+      ]
+    );
+
+    // ✅ Insert all order items
+    for (const item of cartItems) {
+      const unitPrice = parseFloat(item.total_price) / (item.quantity || 1);
+
+      await connection.query(
+        `INSERT INTO order_items (
+          order_id, cart_item_id, customizations_id, 
+          product_title, image_url, unit_price, quantity, sizes
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           orderId,
-          user.id,
           item.id,
-          user.org_id,
-          shipping_address_id,
-          billing_address_id,
-          itemTotal,
+          item.customizations_id,
+          item.title,
+          item.image,
+          unitPrice.toFixed(2),
+          item.quantity || 1,
+          JSON.stringify(item.sizes || {}),
         ]
       );
     }
 
-    const orderBatchId = "ORD-" + Date.now();
+    // ✅ Mark cart items as ordered
+    await connection.query(
+      `UPDATE cart_items SET ordered = TRUE WHERE user_id = ?`,
+      [user_id]
+    );
 
-    // ✅ Prepare email HTML
-    const tableRows = cart
-      .map((item) => {
-        const customization = customizations.find((c) => c.id === item.id);
-        const previewUrl = customization
-          ? `${process.env.BASE_URL || "http://localhost:3000"}${customization.preview_image_url}`
-          : item.image;
+    // ✅ Commit transaction
+    await connection.commit();
 
-        const sizeCells = Object.entries(item.sizes || {})
-          .filter(([_, qty]) => qty > 0)
-          .map(([size, qty]) => `<div>${size.toUpperCase()}: ${qty}</div>`)
-          .join("");
-
-        const subtotal = (parseFloat(item.unit_price) * item.quantity).toFixed(2);
-
-        return `
-          <tr>
-            <td style="text-align:center;"><img src="${previewUrl}" width="100"/></td>
-            <td>${item.title}</td>
-            <td>${sizeCells}</td>
-            <td>${item.quantity}</td>
-            <td>$${item.price}</td>
-            <td>$${subtotal}</td>
-          </tr>`;
-      })
-      .join("");
-
-    const html = `
-      <h2>Order Confirmation - ${orderBatchId}</h2>
-      <p>Dear ${user.name || "Customer"}, thank you for your order!</p>
-      <table border="1" cellspacing="0" cellpadding="8" style="border-collapse:collapse;width:100%;">
-        <thead>
-          <tr style="background:#f2f2f2;text-align:left;">
-            <th>Image</th>
-            <th>Product</th>
-            <th>Sizes</th>
-            <th>Quantity</th>
-            <th>Price</th>
-            <th>Subtotal</th>
-          </tr>
-        </thead>
-        <tbody>${tableRows}</tbody>
-        <tfoot>
-          <tr style="font-weight:bold;">
-            <td colspan="5" style="text-align:right;">Total:</td>
-            <td>$${verifiedTotal}</td>
-          </tr>
-        </tfoot>
-      </table>
-      <p style="margin-top:16px;">We’ll contact you soon with your shipping details.</p>
-    `;
-
-    // ✅ Send confirmation emails
-    if (user.email)
-      await sendEmail(user.email, `Your Order Confirmation - ${orderBatchId}`, "Order Confirmation", html);
-
-    if (process.env.EMAIL_ADMIN)
-      await sendEmail(process.env.EMAIL_ADMIN, `New Order - ${orderBatchId}`, "New Order Received", html);
-
-    // ✅ Success response
-    res.json({
+    res.status(201).json({
       success: true,
-      message: "Order placed successfully, confirmation sent.",
-      orderBatchId,
-      totalAmount: verifiedTotal,
+      message: "Order created successfully.",
+      order_id: orderId,
+      order_batch_id: orderBatchId,
+      total: totalAmount,
+      items: cartItems.length,
     });
   } catch (error) {
-    console.error("❌ Checkout Error:", error);
-    res.status(500).json({ success: false, message: "Checkout failed.", error: error.message });
+    console.error("❌ Order creation failed:", error);
+    await connection.rollback();
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to create order.", error: error.message });
+  } finally {
+    connection.release();
   }
 });
+
+
 
 
 /**
