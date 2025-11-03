@@ -116,66 +116,77 @@ router.get("/all-orders", authenticateToken, async (req, res) => {
 
     let query = `
       SELECT 
-        o.id,
-        o.order_batch_id,
-        o.status,
-        o.total_amount,
-        o.payment_status,
-        o.created_at,
-        o.updated_at,
+  o.id,
+  o.order_batch_id,
+  o.status,
+  o.total_amount,
+  o.payment_status,
+  o.created_at,
+  o.updated_at,
 
-        -- Shipping address
-        sa.type AS shipping_type,
-        sa.address_line1 AS shipping_address_line1,
-        sa.address_line2 AS shipping_address_line2,
-        sa.city AS shipping_city,
-        sa.state AS shipping_state,
-        sa.postal_code AS shipping_postal_code,
-        sa.country AS shipping_country,
-        sa.is_default AS shipping_is_default,
+  -- Shipping address
+  sa.type AS shipping_type,
+  sa.address_line1 AS shipping_address_line1,
+  sa.address_line2 AS shipping_address_line2,
+  sa.city AS shipping_city,
+  sa.state AS shipping_state,
+  sa.postal_code AS shipping_postal_code,
+  sa.country AS shipping_country,
+  sa.is_default AS shipping_is_default,
 
-        -- Billing address
-        ba.type AS billing_type,
-        ba.address_line1 AS billing_address_line1,
-        ba.address_line2 AS billing_address_line2,
-        ba.city AS billing_city,
-        ba.state AS billing_state,
-        ba.postal_code AS billing_postal_code,
-        ba.country AS billing_country,
-        ba.is_default AS billing_is_default,
+  -- Billing address
+  ba.type AS billing_type,
+  ba.address_line1 AS billing_address_line1,
+  ba.address_line2 AS billing_address_line2,
+  ba.city AS billing_city,
+  ba.state AS billing_state,
+  ba.postal_code AS billing_postal_code,
+  ba.country AS billing_country,
+  ba.is_default AS billing_is_default,
 
-        -- User info
-        u.f_name,
-        u.l_name,
-        u.email,
+  -- User info
+  u.f_name,
+  u.l_name,
+  u.email,
 
-        -- Cart item images
-        JSON_ARRAYAGG(ci.image) AS cart_images,
+  -- Cart item images (from cart_items)
+  JSON_ARRAYAGG(ci.image) AS cart_images,
 
-        -- Customization details in separate columns
-        GROUP_CONCAT(DISTINCT c.id) AS customization_ids,
-        GROUP_CONCAT(DISTINCT c.preview_image_url) AS customization_images,
-        GROUP_CONCAT(DISTINCT c.product_variant_id) AS customization_product_variants,
-        GROUP_CONCAT(DISTINCT c.logo_variant_id) AS customization_logo_variants,
-        GROUP_CONCAT(DISTINCT c.placement_id) AS customization_placements,
-        GROUP_CONCAT(DISTINCT c.created_at) AS customization_created_dates
+  -- Customization details in separate columns
+  GROUP_CONCAT(DISTINCT c.id) AS customization_ids,
+  GROUP_CONCAT(DISTINCT c.preview_image_url) AS customization_images,
+  GROUP_CONCAT(DISTINCT c.product_variant_id) AS customization_product_variants,
+  GROUP_CONCAT(DISTINCT c.logo_variant_id) AS customization_logo_variants,
+  GROUP_CONCAT(DISTINCT c.placement_id) AS customization_placements,
+  GROUP_CONCAT(DISTINCT c.created_at) AS customization_created_dates
 
-      FROM orders o
-      JOIN addresses sa ON o.shipping_address_id = sa.id
-      JOIN addresses ba ON o.billing_address_id = ba.id
-      JOIN users u ON o.user_id = u.id
+FROM orders o
+JOIN addresses sa 
+  ON o.shipping_address_id = sa.id
+JOIN addresses ba 
+  ON o.billing_address_id = ba.id
+JOIN users u 
+  ON o.user_id = u.id
 
-      LEFT JOIN JSON_TABLE(
-        o.cart_id,
-        '$[*]' COLUMNS (cart_item_id VARCHAR(15) PATH '$')
-      ) AS jt_cart ON TRUE
-      LEFT JOIN cart_items ci ON ci.id = jt_cart.cart_item_id
+-- Expand JSON arrays for cart items
+LEFT JOIN JSON_TABLE(
+  o.cart_id,
+  '$[*]' COLUMNS (cart_item_id VARCHAR(15) PATH '$')
+) AS jt_cart ON TRUE
+LEFT JOIN cart_items ci 
+  ON ci.id COLLATE utf8mb4_unicode_ci = jt_cart.cart_item_id COLLATE utf8mb4_unicode_ci
 
-      LEFT JOIN JSON_TABLE(
-        o.customizations_id,
-        '$[*]' COLUMNS (custom_id VARCHAR(15) PATH '$')
-      ) AS jt_custom ON TRUE
-      LEFT JOIN customizations c ON c.id = jt_custom.custom_id
+-- Expand JSON arrays for customizations
+LEFT JOIN JSON_TABLE(
+  o.customizations_id,
+  '$[*]' COLUMNS (custom_id VARCHAR(15) PATH '$')
+) AS jt_custom ON TRUE
+LEFT JOIN customizations c 
+  ON c.id COLLATE utf8mb4_unicode_ci = jt_custom.custom_id COLLATE utf8mb4_unicode_ci
+
+GROUP BY o.id
+ORDER BY o.created_at DESC;
+
     `;
 
     // 🧠 Authorization-based filtering
