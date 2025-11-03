@@ -222,26 +222,33 @@ router.get("/all-orders", authenticateToken, async (req, res) => {
     const params = [];
 
     if (role === "Super Admin") {
-      // ✅ Can see all orders
+      // ✅ Super Admin → fetch all orders
       query += ` ORDER BY o.created_at DESC`;
     } else if (role === "Admin" || role === "Manager") {
-      // ✅ Can see only their org's orders
+      // ✅ Admin / Manager → fetch orders of their organization only
       query += ` WHERE o.org_id = ? ORDER BY o.created_at DESC`;
       params.push(org_id);
     } else {
-      return res.status(403).json({ success: false, message: "Unauthorized access" });
+      // ❌ Other roles — deny access
+      return res.status(403).json({
+        success: false,
+        message: "Unauthorized access.",
+      });
     }
 
     const [orders] = await promiseConn.query(query, params);
 
-    res.json({
+    return res.status(200).json({
       success: true,
       count: orders.length,
       orders,
     });
   } catch (err) {
     console.error("❌ Error fetching orders:", err);
-    res.status(500).json({ success: false, message: "Internal server error" });
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error while fetching orders.",
+    });
   }
 });
 
