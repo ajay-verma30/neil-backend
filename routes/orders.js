@@ -77,13 +77,25 @@ router.get("/my-orders", authenticateToken, async (req, res) => {
       "SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC",
       [userId]
     );
+    const safeParse = (data) => {
+      if (!data) return [];
+      if (Array.isArray(data)) return data;
+      try {
+        return JSON.parse(data);
+      } catch {
+        return data
+          .toString()
+          .replace(/[\[\]\"]/g, "")
+          .split(",")
+          .map(s => s.trim())
+          .filter(Boolean);
+      }
+    };
 
     const formattedOrders = orders.map(order => ({
       ...order,
-      cart_id: order.cart_id ? JSON.parse(order.cart_id) : [],
-      customizations_id: order.customizations_id
-        ? JSON.parse(order.customizations_id)
-        : []
+      cart_id: safeParse(order.cart_id),
+      customizations_id: safeParse(order.customizations_id)
     }));
 
     res.json({
@@ -96,5 +108,6 @@ router.get("/my-orders", authenticateToken, async (req, res) => {
     res.status(500).json({ success: false, message: "Internal server error" });
   }
 });
+
 
 module.exports = router;
