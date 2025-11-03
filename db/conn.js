@@ -1,7 +1,4 @@
-// db/conn.js
 const mysql = require("mysql2");
-
-// ✅ Create a MySQL connection pool
 const mysqlconnect = () => {
   const pool = mysql.createPool({
     host: "34.47.196.69",
@@ -14,7 +11,6 @@ const mysqlconnect = () => {
     queueLimit: 0,
   });
 
-  // ✅ Optional: connection event logs (safe to remove in production)
   pool.on("connection", (connection) => {
     console.log("✅ MySQL new connection established (threadId:", connection.threadId, ")");
   });

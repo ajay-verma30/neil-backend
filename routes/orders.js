@@ -22,14 +22,19 @@ router.post("/create", authenticateToken, async (req, res) => {
     if (!cartItems.length) {
       return res.status(400).json({ success: false, message: "No items in cart." });
     }
-    const cartIds = cartItems.map(i => i.id);
-    const customizationIds = cartItems
-      .map(i => i.customizations_id)
-      .filter(id => id !== null);
+    const cleanArray = (arr) =>
+  arr.map((id) => id?.replace(/['"\[\]]/g, "").trim()).filter(Boolean);
+
+const cartIds = cleanArray(cartItems.map((i) => i.id));
+const customizationIds = cleanArray(
+  cartItems.map((i) => i.customizations_id)
+);
     const totalAmount = cartItems.reduce(
       (sum, item) => sum + parseFloat(item.total_price),
       0
     );
+
+
 
     const orderId = "ORD-" + nanoid(8);
     const batchId = "BATCH-" + nanoid(6);
@@ -190,27 +195,121 @@ router.get("/:id", authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
 
+    // Fetch order + related details
     const [rows] = await promiseConn.query(
-      "SELECT * FROM orders WHERE id = ?",
+      `
+      SELECT 
+        o.id,
+        o.order_batch_id,
+        o.status,
+        o.total_amount,
+        o.payment_status,
+        o.payment_method,
+        o.cart_id,
+        o.customizations_id,
+        o.created_at,
+        o.updated_at,
+
+        -- Shipping address
+        CONCAT_WS(', ',
+          sa.address_line1,
+          sa.address_line2,
+          sa.city,
+          sa.state,
+          sa.postal_code,
+          sa.country
+        ) AS shipping_address,
+
+        -- Billing address
+        CONCAT_WS(', ',
+          ba.address_line1,
+          ba.address_line2,
+          ba.city,
+          ba.state,
+          ba.postal_code,
+          ba.country
+        ) AS billing_address,
+
+        -- User details
+        u.f_name,
+        u.l_name,
+        u.email
+      FROM orders o
+      JOIN addresses sa ON o.shipping_address_id = sa.id
+      JOIN addresses ba ON o.billing_address_id = ba.id
+      JOIN users u ON o.user_id = u.id
+      WHERE o.id = ?
+      `,
       [id]
     );
 
     if (rows.length === 0) {
-      return res.status(404).json({ message: "No order found with this ID" });
+      return res.status(404).json({ success: false, message: "Order not found" });
     }
 
+    const order = rows[0];
+const customization_details = [];
+const cart = order.cart_id;
+
+for (let i = 0; i < cart.length; i++) {
+  const [rows] = await promiseConn.query(
+    `SELECT 
+      ct.title,
+      ct.image,
+      ct.sizes,
+      ct.quantity,
+      lp.name AS placement_name,
+      lp.view AS placement_view,
+      lv.color AS logo_color,
+      pv.color AS product_color,
+      pv.sku AS product_sku
+    FROM cart_items ct
+    JOIN customizations c ON ct.customizations_id = c.id
+    JOIN logo_placements lp ON c.placement_id = lp.id
+    JOIN logo_variants lv ON c.logo_variant_id = lv.id
+    JOIN product_variants pv ON c.product_variant_id = pv.id
+    WHERE ct.id = ?`,
+    [cart[i]]
+  );
+
+  if (rows.length > 0) {
+    customization_details.push(rows[0]);
+  }
+}
     return res.status(200).json({
       success: true,
-      data: rows[0],
+      data: {
+        id: order.id,
+        order_batch_id: order.order_batch_id,
+        status: order.status,
+        total_amount: order.total_amount,
+        payment_status: order.payment_status,
+        payment_method: order.payment_method,
+        cart_ids: order.cart_id,
+        customizationDetails: customization_details,
+        shipping_address: order.shipping_address,
+        billing_address: order.billing_address,
+        created_at: order.created_at,
+        updated_at: order.updated_at,
+        customer: {
+          f_name: order.f_name,
+          l_name: order.l_name,
+          email: order.email
+        }
+      }
     });
   } catch (err) {
     console.error("Error fetching order:", err);
     res.status(500).json({
       success: false,
-      message: "Internal server error",
+      message: "Internal server error"
     });
   }
 });
+
+
+
+
 
 
 
