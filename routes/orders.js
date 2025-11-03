@@ -544,6 +544,92 @@ for (let i = 0; i < cart.length; i++) {
 });
 
 
+//update order (status/Notes)
+router.patch("/:id", authenticateToken, async (req, res) => {
+  const { id } = req.params;
+  const { status, note } = req.body;
+  const requester = req.user;
+if (requester.role !== "Super Admin") {
+    return res.status(403).json({
+      success: false,
+      message: "Access denied. Only Super Admins can update orders.",
+    });
+  }
+  const validStatuses = [
+    "Pending",
+    "Processing",
+    "Shipped",
+    "Delivered",
+    "Cancelled",
+    "Returned",
+  ];
+  if (status && !validStatuses.includes(status)) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid status provided.",
+    });
+  }
+
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    await conn.beginTransaction();
+
+    const [existingOrder] = await conn.query(
+      "SELECT id, status FROM orders WHERE id = ?",
+      [id]
+    );
+    if (existingOrder.length === 0) {
+      await conn.rollback();
+      return res.status(404).json({
+        success: false,
+        message: "Order not found.",
+      });
+    }
+
+    if (status) {
+      await conn.query("UPDATE orders SET status = ? WHERE id = ?", [
+        status,
+        id,
+      ]);
+    }
+
+    if (note && note.trim() !== "") {
+      await conn.query("INSERT INTO order_notes (order_id, note) VALUES (?, ?)", [
+        id,
+        note,
+      ]);
+    }
+    await conn.commit();
+    const [[updatedOrder]] = await conn.query(
+      "SELECT id, status, updated_at FROM orders WHERE id = ?",
+      [id]
+    );
+    const [notes] = await conn.query(
+      "SELECT id, note, created_at FROM order_notes WHERE order_id = ? ORDER BY created_at DESC",
+      [id]
+    );
+    return res.status(200).json({
+      success: true,
+      message: "Order updated successfully.",
+      data: {
+        order: updatedOrder,
+        notes,
+      },
+    });
+  } catch (err) {
+    if (conn) await conn.rollback();
+    console.error("❌ Error updating order:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Internal Server Error while updating order.",
+      error: err.message,
+    });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
 
 
 module.exports = router;
