@@ -71,16 +71,18 @@ router.post("/create", authenticateToken, async (req, res) => {
       [userId]
     );
     const orderDetails = cartItems
-      .map(
-        (item) => `
-          <tr>
-            <td>${item.title}</td>
-            <td>${item.quantity}</td>
-            <td>$${item.total_price.toFixed(2)}</td>
-          </tr>
-        `
-      )
-      .join("");
+  .map((item) => {
+    const price = parseFloat(item.total_price || 0);
+    return `
+      <tr>
+        <td>${item.title}</td>
+        <td>${item.quantity}</td>
+        <td>$${price.toFixed(2)}</td>
+      </tr>
+    `;
+  })
+  .join("");
+
 
     const emailHtml = `
       <h2>Order Confirmation - Neil Prints</h2>
