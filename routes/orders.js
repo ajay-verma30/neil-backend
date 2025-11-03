@@ -549,12 +549,14 @@ router.patch("/:id", authenticateToken, async (req, res) => {
   const { id } = req.params;
   const { status, note } = req.body;
   const requester = req.user;
-if (requester.role !== "Super Admin") {
+
+  if (requester.role !== "Super Admin") {
     return res.status(403).json({
       success: false,
       message: "Access denied. Only Super Admins can update orders.",
     });
   }
+
   const validStatuses = [
     "Pending",
     "Processing",
@@ -572,13 +574,19 @@ if (requester.role !== "Super Admin") {
 
   let conn;
   try {
-conn = await promiseConn.getConnection();
+    conn = await promiseConn.getConnection();
     await conn.beginTransaction();
 
+    // 🧠 Fetch order and customer
     const [existingOrder] = await conn.query(
-      "SELECT id, status FROM orders WHERE id = ?",
+      `SELECT o.id, o.status, o.total_amount, o.payment_method,
+              u.f_name, u.l_name, u.email
+       FROM orders o
+       JOIN users u ON o.user_id = u.id
+       WHERE o.id = ?`,
       [id]
     );
+
     if (existingOrder.length === 0) {
       await conn.rollback();
       return res.status(404).json({
@@ -587,6 +595,9 @@ conn = await promiseConn.getConnection();
       });
     }
 
+    const order = existingOrder[0];
+
+    // 🧾 Update status
     if (status) {
       await conn.query("UPDATE orders SET status = ? WHERE id = ?", [
         status,
@@ -594,26 +605,60 @@ conn = await promiseConn.getConnection();
       ]);
     }
 
+    // 🗒️ Add note if provided
     if (note && note.trim() !== "") {
       await conn.query("INSERT INTO order_notes (order_id, note) VALUES (?, ?)", [
         id,
         note,
       ]);
     }
+
     await conn.commit();
-    const [[updatedOrder]] = await conn.query(
-      "SELECT id, status, updated_at FROM orders WHERE id = ?",
-      [id]
-    );
+
+    // 🧩 Fetch updated notes
     const [notes] = await conn.query(
       "SELECT id, note, created_at FROM order_notes WHERE order_id = ? ORDER BY created_at DESC",
       [id]
     );
+
+    // 📧 Build email content
+    let emailHtml = `
+      <h2>Order Update - Neil Prints</h2>
+      <p>Hi ${order.f_name},</p>
+      <p>Your order <b>${id}</b> has been updated.</p>
+    `;
+
+    if (status) {
+      emailHtml += `
+        <p><b>New Status:</b> ${status}</p>
+      `;
+    }
+
+    if (note && note.trim() !== "") {
+      emailHtml += `
+        <p><b>Admin Note:</b></p>
+        <blockquote style="border-left:4px solid #007bff;padding-left:8px;color:#555;">
+          ${note}
+        </blockquote>
+      `;
+    }
+
+    // ✉️ Send email
+    await sendEmail(
+      order.email,
+      `Order Update - ${id} (${status || "Note Added"})`,
+      emailHtml
+    );
+
     return res.status(200).json({
       success: true,
-      message: "Order updated successfully.",
+      message: "Order updated successfully and email sent.",
       data: {
-        order: updatedOrder,
+        order: {
+          id,
+          status: status || order.status,
+          updated_at: new Date(),
+        },
         notes,
       },
     });
@@ -629,6 +674,7 @@ conn = await promiseConn.getConnection();
     if (conn) conn.release();
   }
 });
+
 
 
 
