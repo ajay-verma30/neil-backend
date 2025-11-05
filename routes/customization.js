@@ -58,10 +58,29 @@ route.post("/new", Authtoken, upload.single("preview"), async (req, res) => {
   try {
     conn = await pool.getConnection();
 
-    const { user_id, product_variant_id, logo_variant_id, placement_id } = req.body;
+    let { user_id, product_variant_id, logo_variant_id, placement_id } = req.body;
 
-    if (!user_id || !product_variant_id || !logo_variant_id || !placement_id) {
-      return res.status(400).json({ message: "Missing required fields." });
+    // Conditional checks
+    if (!user_id) {
+      return res.status(400).json({ message: "⚠️ User ID is required." });
+    }
+    if (!product_variant_id) {
+      return res.status(400).json({ message: "⚠️ Please select a product variant." });
+    }
+    if (!logo_variant_id) {
+      return res.status(400).json({ message: "⚠️ Please select a logo variant." });
+    }
+    if (!placement_id) {
+      return res.status(400).json({ message: "⚠️ Please select a placement." });
+    }
+
+    // Convert IDs to integers to prevent MySQL errors
+    product_variant_id = Number(product_variant_id);
+    logo_variant_id = Number(logo_variant_id);
+    placement_id = Number(placement_id);
+
+    if (isNaN(product_variant_id) || isNaN(logo_variant_id) || isNaN(placement_id)) {
+      return res.status(400).json({ message: "⚠️ Invalid variant or placement ID." });
     }
 
     let previewUrl = null;

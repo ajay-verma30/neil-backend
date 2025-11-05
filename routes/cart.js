@@ -11,18 +11,20 @@ const authenticateToken = require("../Auth/tokenAuthentication");
 // -----------------------------------------------------
 route.post("/add", authenticateToken, async (req, res) => {
   try {
-    const { user_id, product_id, title, image,customizations_id, quantity, sizes, total_price } = req.body;
+    const { user_id, product_id, title, image, customizations_id, quantity, sizes, total_price } = req.body;
 
-    if (!user_id || !product_id || !customizations_id || !title || !total_price) {
-      return res.status(400).json({ message: "Missing required fields." });
-    }
+    if (!user_id) return res.status(400).json({ message: "⚠️ User ID is required." });
+    if (!product_id) return res.status(400).json({ message: "⚠️ Product ID is required." });
+    if (!customizations_id) return res.status(400).json({ message: "⚠️ Customization ID is required." });
+    if (!title) return res.status(400).json({ message: "⚠️ Product title is required." });
+    if (!total_price) return res.status(400).json({ message: "⚠️ Total price is required." });
 
-    const id = nanoid(10); 
+    const id = nanoid(10);
 
-    const [result] = await pool.query(
+    await pool.query(
       `INSERT INTO cart_items 
-        (id, user_id, product_id, title, image,customizations_id, quantity, sizes, total_price, ordered) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?,?, FALSE)`,
+        (id, user_id, product_id, title, image, customizations_id, quantity, sizes, total_price, ordered) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, FALSE)`,
       [
         id,
         user_id,
