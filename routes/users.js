@@ -1101,17 +1101,17 @@ route.patch("/:id/reset-password", Authtoken, async (req, res) => {
   try {
     const { id: userId } = req.params;
     const { oldPassword, newPassword } = req.body;
-    const [rows] = await pool.query("SELECT password FROM users WHERE id = ?", [userId]);
+    const [rows] = await pool.query("SELECT hashPassword FROM users WHERE id = ?", [userId]);
     if (rows.length === 0) {
       return res.status(404).json({ message: "User not found" });
     }
     const existingPassword = rows[0].password;
     const isMatch = await bcrypt.compare(oldPassword, existingPassword);
     if (!isMatch) {
-      return res.status(400).json({ message: "Old password is incorrect" });
+      return res.status(400).json({ message: "Old Password is incorrect" });
     }
     const hashedPassword = await bcrypt.hash(newPassword, 10);
-    const [result] = await pool.query("UPDATE users SET password = ? WHERE id = ?", [hashedPassword, userId]);
+    const [result] = await pool.query("UPDATE users SET hashPassword = ? WHERE id = ?", [hashedPassword, userId]);
     if (result.affectedRows !== 1) {
       return res.status(400).json({ message: "Failed to update password. Try again!" });
     }
