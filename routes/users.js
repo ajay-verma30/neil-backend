@@ -12,6 +12,7 @@ const XLSX = require("xlsx");
 require("dotenv").config();
 const Authtoken = require("../Auth/tokenAuthentication");
 const { sendEmail } = require("./mailer");
+const authenticateToken = require("../Auth/tokenAuthentication");
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -1093,6 +1094,38 @@ route.patch(
     }
   }
 );
+
+
+//update password 
+route.patch("/:id/reset-password", Authtoken, async (req, res) => {
+  try {
+    const { id: userId } = req.params;
+    const { oldPassword, newPassword } = req.body;
+    const [rows] = await pool.query("SELECT password FROM users WHERE id = ?", [userId]);
+    if (rows.length === 0) {
+      return res.status(404).json({ message: "User not found" });
+    }
+    const existingPassword = rows[0].password;
+    const isMatch = await bcrypt.compare(oldPassword, existingPassword);
+    if (!isMatch) {
+      return res.status(400).json({ message: "Old password is incorrect" });
+    }
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    const [result] = await pool.query("UPDATE users SET password = ? WHERE id = ?", [hashedPassword, userId]);
+    if (result.affectedRows !== 1) {
+      return res.status(400).json({ message: "Failed to update password. Try again!" });
+    }
+    return res.status(200).json({ message: "Password updated successfully!" });
+  } catch (error) {
+    console.error("❌ Error updating password:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal Server Error",
+      error: error.message,
+    });
+  }
+});
+
 
 
 
