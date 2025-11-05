@@ -298,6 +298,40 @@ route.get("/all-products", Authtoken, async (req, res) => {
   }
 });
 
+// GET /categories-subcategories 
+route.get("/categories", async (req, res) => {
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    const categories = ['Tshirts', 'Mugs', 'Pens', 'Bottles', 'Books', 'Hoodies'];
+    const [rows] = await conn.query(`
+      SELECT category, GROUP_CONCAT(title ORDER BY title ASC) AS subcategories
+      FROM sub_categories
+      GROUP BY category
+    `);
+    const categoryMap = {};
+    rows.forEach(r => {
+      categoryMap[r.category] = r.subcategories ? r.subcategories.split(',') : [];
+    });
+    const result = categories.map(cat => ({
+      category: cat,
+      subcategories: categoryMap[cat] || [],
+    }));
+
+    res.status(200).json({
+      message: "✅ Categories fetched successfully.",
+      categories: result,
+    });
+
+  } catch (err) {
+    console.error("❌ Error fetching categories:", err);
+    res.status(500).json({ message: "Server error fetching categories.", error: err.message });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+
 /* -------------------------------------------------------------------------- */
 /* ✅ PRODUCTS SUMMARY */
 /* -------------------------------------------------------------------------- */
