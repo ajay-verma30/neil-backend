@@ -1101,20 +1101,41 @@ route.patch("/:id/reset-password", Authtoken, async (req, res) => {
   try {
     const { id: userId } = req.params;
     const { oldPassword, newPassword } = req.body;
-    const [rows] = await pool.query("SELECT hashPassword FROM users WHERE id = ?", [userId]);
+
+    // 1️⃣ Fetch the user's current hashed password
+    const [rows] = await pool.query(
+      "SELECT hashPassword FROM users WHERE id = ?",
+      [userId]
+    );
+
     if (rows.length === 0) {
       return res.status(404).json({ message: "User not found" });
     }
-    const existingPassword = rows[0].password;
+
+    const existingPassword = rows[0].hashPassword;
+
+    // 2️⃣ Compare old password with stored hashed password
     const isMatch = await bcrypt.compare(oldPassword, existingPassword);
     if (!isMatch) {
-      return res.status(400).json({ message: "Old Password is incorrect" });
+      return res.status(400).json({ message: "Old password is incorrect" });
     }
+
+    // 3️⃣ Hash the new password
     const hashedPassword = await bcrypt.hash(newPassword, 10);
-    const [result] = await pool.query("UPDATE users SET hashPassword = ? WHERE id = ?", [hashedPassword, userId]);
+
+    // 4️⃣ Update the password in the database
+    const [result] = await pool.query(
+      "UPDATE users SET hashPassword = ? WHERE id = ?",
+      [hashedPassword, userId]
+    );
+
     if (result.affectedRows !== 1) {
-      return res.status(400).json({ message: "Failed to update password. Try again!" });
+      return res
+        .status(400)
+        .json({ message: "Failed to update password. Try again!" });
     }
+
+    // 5️⃣ Success
     return res.status(200).json({ message: "Password updated successfully!" });
   } catch (error) {
     console.error("❌ Error updating password:", error);
