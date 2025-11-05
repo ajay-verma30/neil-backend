@@ -60,35 +60,32 @@ route.post("/new", Authtoken, upload.single("preview"), async (req, res) => {
 
     let { user_id, product_variant_id, logo_variant_id, placement_id } = req.body;
 
-    // Conditional checks
+    // ✅ Only user_id is strictly required
     if (!user_id) {
       return res.status(400).json({ message: "⚠️ User ID is required." });
     }
-    if (!product_variant_id) {
-      return res.status(400).json({ message: "⚠️ Please select a product variant." });
-    }
-    if (!logo_variant_id) {
-      return res.status(400).json({ message: "⚠️ Please select a logo variant." });
-    }
-    if (!placement_id) {
-      return res.status(400).json({ message: "⚠️ Please select a placement." });
-    }
 
-    // Convert IDs to integers to prevent MySQL errors
-    product_variant_id = Number(product_variant_id);
-    logo_variant_id = Number(logo_variant_id);
-    placement_id = Number(placement_id);
+    // ✅ Convert IDs to numbers or null if missing/invalid
+    product_variant_id = !isNaN(Number(product_variant_id)) ? Number(product_variant_id) : null;
+    logo_variant_id = !isNaN(Number(logo_variant_id)) ? Number(logo_variant_id) : null;
+    placement_id = !isNaN(Number(placement_id)) ? Number(placement_id) : null;
 
-    if (isNaN(product_variant_id) || isNaN(logo_variant_id) || isNaN(placement_id)) {
-      return res.status(400).json({ message: "⚠️ Invalid variant or placement ID." });
-    }
+    // ✅ Optional: log incoming data for debugging
+    console.log("🧾 Incoming customization:", {
+      user_id,
+      product_variant_id,
+      logo_variant_id,
+      placement_id,
+    });
 
+    // ✅ Handle preview image upload
     let previewUrl = null;
     if (req.file && req.file.buffer) {
       previewUrl = await uploadToCloudinary(req.file.buffer, "customizations/previews");
     }
 
     const id = nanoid(10);
+
     await conn.query(
       `
       INSERT INTO customizations 
@@ -99,7 +96,7 @@ route.post("/new", Authtoken, upload.single("preview"), async (req, res) => {
     );
 
     return res.status(201).json({
-      message: "Customization created successfully.",
+      message: "✅ Customization created successfully.",
       customization: {
         id,
         user_id,
@@ -119,6 +116,7 @@ route.post("/new", Authtoken, upload.single("preview"), async (req, res) => {
     if (conn) conn.release();
   }
 });
+
 
 // =====================
 // GET /all-customizations - Role-based Listing
