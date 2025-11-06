@@ -684,20 +684,20 @@ route.patch(
         for (const sizeAttr of parsedSizes) {
           if (!sizeAttr.name) continue;
           const [existingSize] = await conn.query(
-            `SELECT id FROM variant_size_attributes WHERE variant_id = ? AND size = ?`,
-            [currentVariantId, sizeAttr.name]
-          );
+  `SELECT variant_id FROM variant_size_attributes WHERE variant_id = ? AND size = ?`, 
+  [currentVariantId, sizeAttr.name]
+);
 
           const adjustment = parseFloat(sizeAttr.adjustment) || 0.0;
           const stock = parseInt(sizeAttr.stock) || 0;
 
           if (existingSize.length > 0) {
             await conn.query(
-              `UPDATE variant_size_attributes 
-                SET price_adjustment = ?, stock_quantity = ? 
-                WHERE id = ?`,
-              [adjustment, stock, existingSize[0].id]
-            );
+    `UPDATE variant_size_attributes 
+     SET price_adjustment = ?, stock_quantity = ? 
+     WHERE variant_id = ? AND size = ?`, 
+    [adjustment, stock, currentVariantId, sizeAttr.name]
+  );
           } else {
             // Insert New Size
             await conn.query(
