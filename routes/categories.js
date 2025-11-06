@@ -3,7 +3,8 @@ const route = express.Router();
 const { nanoid } = require("nanoid");
 const mysqlconnect = require("../db/conn");
 const Authtoken = require("../Auth/tokenAuthentication");
-
+const pool = mysqlconnect();
+const promisePool = pool.promise();
 
 const getCurrentMysqlDatetime = () =>
   new Date().toISOString().slice(0, 19).replace("T", " ");
@@ -19,7 +20,7 @@ const authorizeRoles = (...allowedRoles) => (req, res, next) => {
 //new category
 
 route.post('/new', Authtoken, authorizeRoles("Super Admin", "Admin", "Manager"), async (req, res) => {
-    const conn = await mysqlconnect.getConnection();
+    const conn = await promisePool.getConnection();
     try {
         await conn.beginTransaction();
 
@@ -60,7 +61,7 @@ route.post('/new', Authtoken, authorizeRoles("Super Admin", "Admin", "Manager"),
 //all -categories
 // Get all categories
 route.get('/all', Authtoken, authorizeRoles("Super Admin", "Admin", "Manager"), async (req, res) => {
-    const conn = await mysqlconnect.getConnection();
+    const conn = await promisePool.getConnection();
     try {
         const { org_id } = req.query; 
 
@@ -92,7 +93,7 @@ route.get('/all', Authtoken, authorizeRoles("Super Admin", "Admin", "Manager"), 
 //delete 
 // Delete a category
 route.delete('/:id', Authtoken, authorizeRoles("Super Admin", "Admin", "Manager"), async (req, res) => {
-    const conn = await mysqlconnect.getConnection();
+    const conn = await promisePool.getConnection();
     try {
         const { id } = req.params;
 
