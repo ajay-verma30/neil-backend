@@ -546,79 +546,338 @@ route.get("/:id", Authtoken, async (req, res) => {
 //   }
 // });
 
+// update product details
+route.patch(
+  "/edit/:id",
+  Authtoken,
+  authorizeRoles("Super Admin", "Admin", "Manager"),
+  upload,
+  async (req, res) => {
+    const conn = await promisePool.getConnection();
+    try {
+      await conn.beginTransaction();
+
+      const { id: productId } = req.params;
+      const files = req.files || [];
+      const {
+        title,
+        description,
+        sku,
+        category,
+        price,
+        variants,
+        group_visibility,
+        sub_cat,
+        org_id: orgIdFromFrontend,
+        deleted_images,
+        deleted_variants, // optional: array of variant IDs to delete
+      } = req.body;
+
+      // 🔍 Ensure product exists
+      const [productCheck] = await conn.query(
+        "SELECT * FROM products WHERE id = ?",
+        [productId]
+      );
+      if (!productCheck.length)
+        return res.status(404).json({ message: "Product not found" });
+
+      const requester = req.user;
+      const org_id =
+        requester.role === "Super Admin"
+          ? orgIdFromFrontend || productCheck[0].org_id
+          : requester.org_id || productCheck[0].org_id;
+
+      // 🧾 Update base product fields (if provided)
+      const updateFields = [];
+      const params = [];
+      if (title) { updateFields.push("title = ?"); params.push(title); }
+      if (description) { updateFields.push("description = ?"); params.push(description); }
+      if (sku) { updateFields.push("sku = ?"); params.push(sku); }
+      if (category) { updateFields.push("category = ?"); params.push(category); }
+      if (price) { updateFields.push("price = ?"); params.push(price); }
+      if (sub_cat) { updateFields.push("sub_cat = ?"); params.push(sub_cat); }
+
+      if (updateFields.length > 0) {
+        await conn.query(
+          `UPDATE products SET ${updateFields.join(", ")}, updated_at = NOW() WHERE id = ?`,
+          [...params, productId]
+        );
+      }
+
+      // 🖼 Handle product images
+      if (deleted_images) {
+        let parsedDeletes = [];
+        try {
+          parsedDeletes = JSON.parse(deleted_images);
+        } catch {}
+        if (Array.isArray(parsedDeletes) && parsedDeletes.length) {
+          await conn.query(
+            `DELETE FROM product_images WHERE product_id = ? AND url IN (?)`,
+            [productId, parsedDeletes]
+          );
+        }
+      }
+
+      const productImages = files.filter((f) => f.fieldname === "productImages");
+      for (const file of productImages) {
+        const url = await uploadToCloudinary(file.buffer, "products");
+        await conn.query(
+          "INSERT INTO product_images (product_id, url) VALUES (?, ?)",
+          [productId, url]
+        );
+      }
+
+      // ❌ Handle deleted variants (optional)
+      if (deleted_variants) {
+        let parsedDeletedVariants = [];
+        try {
+          parsedDeletedVariants = JSON.parse(deleted_variants);
+        } catch {}
+        if (Array.isArray(parsedDeletedVariants) && parsedDeletedVariants.length) {
+          await conn.query(
+            "DELETE FROM variant_images WHERE variant_id IN (?)",
+            [parsedDeletedVariants]
+          );
+          await conn.query(
+            "DELETE FROM variant_size_attributes WHERE variant_id IN (?)",
+            [parsedDeletedVariants]
+          );
+          await conn.query(
+            "DELETE FROM product_variants WHERE id IN (?)",
+            [parsedDeletedVariants]
+          );
+        }
+      }
+
+      // 🎨 Handle variants (edit existing or add new)
+      let parsedVariants = [];
+      try {
+        parsedVariants = JSON.parse(variants || "[]");
+      } catch {
+        parsedVariants = [];
+      }
+
+      for (let i = 0; i < parsedVariants.length; i++) {
+        const v = parsedVariants[i];
+        if (!v.sku) continue;
+
+        // If `v.id` exists -> update existing variant
+        if (v.id) {
+          await conn.query(
+            "UPDATE product_variants SET color = ?, sku = ? WHERE id = ? AND product_id = ?",
+            [v.color || null, v.sku, v.id, productId]
+          );
+
+          // Update or insert sizes for that variant
+          let parsedSizes = [];
+          try {
+            parsedSizes = Array.isArray(v.sizes)
+              ? v.sizes
+              : JSON.parse(v.sizes || "[]");
+          } catch {}
+
+          // Update existing size or add new
+          for (const sizeAttr of parsedSizes) {
+            if (!sizeAttr.name) continue;
+
+            const [existing] = await conn.query(
+              `SELECT id FROM variant_size_attributes WHERE variant_id = ? AND size = ?`,
+              [v.id, sizeAttr.name]
+            );
+
+            const adjustment = parseFloat(sizeAttr.adjustment) || 0.0;
+            const stock = parseInt(sizeAttr.stock) || 0;
+
+            if (existing.length > 0) {
+              await conn.query(
+                `UPDATE variant_size_attributes 
+                SET price_adjustment = ?, stock_quantity = ? 
+                WHERE id = ?`,
+                [adjustment, stock, existing[0].id]
+              );
+            } else {
+              await conn.query(
+                `INSERT INTO variant_size_attributes 
+                (variant_id, size, price_adjustment, stock_quantity) 
+                VALUES (?, ?, ?, ?)`,
+                [v.id, sizeAttr.name, adjustment, stock]
+              );
+            }
+          }
+
+          // Upload new variant images if any
+          const variantFiles = files.filter((f) =>
+            f.fieldname.startsWith(`variant-${i}-`)
+          );
+          for (const file of variantFiles) {
+            const type = file.fieldname.split("-")[2] || "front";
+            const url = await uploadToCloudinary(file.buffer, "variants");
+            await conn.query(
+              "INSERT INTO variant_images (variant_id, url, type) VALUES (?, ?, ?)",
+              [v.id, url, type]
+            );
+          }
+        } else {
+          // Add new variant
+          const [variantRes] = await conn.query(
+            "INSERT INTO product_variants (product_id, color, sku) VALUES (?, ?, ?)",
+            [productId, v.color || null, v.sku]
+          );
+          const newVariantId = variantRes.insertId;
+
+          let parsedSizes = [];
+          try {
+            parsedSizes = Array.isArray(v.sizes)
+              ? v.sizes
+              : JSON.parse(v.sizes || "[]");
+          } catch {}
+
+          for (const sizeAttr of parsedSizes) {
+            if (!sizeAttr.name) continue;
+
+            const adjustment = parseFloat(sizeAttr.adjustment) || 0.0;
+            const stock = parseInt(sizeAttr.stock) || 0;
+
+            await conn.query(
+              `INSERT INTO variant_size_attributes 
+              (variant_id, size, price_adjustment, stock_quantity) 
+              VALUES (?, ?, ?, ?)`,
+              [newVariantId, sizeAttr.name, adjustment, stock]
+            );
+          }
+
+          // Upload images for new variant
+          const variantFiles = files.filter((f) =>
+            f.fieldname.startsWith(`variant-${i}-`)
+          );
+          for (const file of variantFiles) {
+            const type = file.fieldname.split("-")[2] || "front";
+            const url = await uploadToCloudinary(file.buffer, "variants");
+            await conn.query(
+              "INSERT INTO variant_images (variant_id, url, type) VALUES (?, ?, ?)",
+              [newVariantId, url, type]
+            );
+          }
+        }
+      }
+
+      // 👀 Group visibility (replace fully or skip if not passed)
+      if (group_visibility) {
+        let parsedGV = [];
+        try {
+          parsedGV =
+            typeof group_visibility === "string"
+              ? JSON.parse(group_visibility)
+              : group_visibility;
+        } catch {
+          parsedGV = [];
+        }
+
+        await conn.query("DELETE FROM group_product_visibility WHERE product_id = ?", [
+          productId,
+        ]);
+
+        if (Array.isArray(parsedGV) && parsedGV.length) {
+          for (const gv of parsedGV) {
+            await conn.query(
+              `INSERT INTO group_product_visibility 
+                (group_id, product_id, is_visible, created_at, updated_at)
+                VALUES (?, ?, ?, NOW(), NOW())`,
+              [gv.group_id, productId, gv.is_visible ?? true]
+            );
+          }
+        }
+      }
+
+      await conn.commit();
+      res.status(200).json({ message: "✅ Product updated successfully", productId });
+    } catch (e) {
+      if (conn) await conn.rollback();
+      console.error("❌ Error updating product:", e);
+      res.status(500).json({ message: "Internal Server Error", error: e.message });
+    } finally {
+      if (conn) conn.release();
+    }
+  }
+);
+
+
+
+
 /* -------------------------------------------------------------------------- */
 /* ✅ UPDATE PRODUCT */
 /* -------------------------------------------------------------------------- */
-route.put("/:id", Authtoken, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { title, description, sku, price, isActive, category, group_visibility } = req.body;
-    const requester = req.user;
 
-    if (!["Super Admin", "Admin", "Manager"].includes(requester.role))
-      return res.status(403).json({ message: "Not authorized." });
+// route.put("/:id", Authtoken, async (req, res) => {
+//   try {
+//     const { id } = req.params;
+//     const { title, description, sku, price, isActive, category, group_visibility } = req.body;
+//     const requester = req.user;
 
-    const [products] = await promisePool.query("SELECT * FROM products WHERE id=?", [id]);
-    if (!products.length) return res.status(404).json({ message: "Product not found" });
+//     if (!["Super Admin", "Admin", "Manager"].includes(requester.role))
+//       return res.status(403).json({ message: "Not authorized." });
 
-    const updates = [];
-    const params = [];
+//     const [products] = await promisePool.query("SELECT * FROM products WHERE id=?", [id]);
+//     if (!products.length) return res.status(404).json({ message: "Product not found" });
 
-    if (title) {
-      updates.push("title=?");
-      params.push(title);
-    }
-    if (description) {
-      updates.push("description=?");
-      params.push(description);
-    }
-    if (sku) {
-      const [checkSku] = await promisePool.query(
-        "SELECT id FROM products WHERE sku=? AND id!=?",
-        [sku, id]
-      );
-      if (checkSku.length) return res.status(409).json({ message: "SKU already exists" });
-      updates.push("sku=?");
-      params.push(sku);
-    }
-    if (price !== undefined) {
-      updates.push("price=?");
-      params.push(price);
-    }
-    if (isActive !== undefined) {
-      updates.push("isActive=?");
-      params.push(isActive);
-    }
-    if (category) {
-      updates.push("category=?");
-      params.push(category);
-    }
+//     const updates = [];
+//     const params = [];
 
-    if (!updates.length && !group_visibility)
-      return res.status(400).json({ message: "No fields provided for update" });
+//     if (title) {
+//       updates.push("title=?");
+//       params.push(title);
+//     }
+//     if (description) {
+//       updates.push("description=?");
+//       params.push(description);
+//     }
+//     if (sku) {
+//       const [checkSku] = await promisePool.query(
+//         "SELECT id FROM products WHERE sku=? AND id!=?",
+//         [sku, id]
+//       );
+//       if (checkSku.length) return res.status(409).json({ message: "SKU already exists" });
+//       updates.push("sku=?");
+//       params.push(sku);
+//     }
+//     if (price !== undefined) {
+//       updates.push("price=?");
+//       params.push(price);
+//     }
+//     if (isActive !== undefined) {
+//       updates.push("isActive=?");
+//       params.push(isActive);
+//     }
+//     if (category) {
+//       updates.push("category=?");
+//       params.push(category);
+//     }
 
-    if (updates.length) {
-      updates.push("updated_at=?");
-      params.push(getCurrentMysqlDatetime(), id);
-      await promisePool.query(`UPDATE products SET ${updates.join(", ")} WHERE id=?`, params);
-    }
+//     if (!updates.length && !group_visibility)
+//       return res.status(400).json({ message: "No fields provided for update" });
 
-    if (Array.isArray(group_visibility)) {
-      await promisePool.query("DELETE FROM group_product_visibility WHERE product_id=?", [id]);
-      for (const gv of group_visibility) {
-        await promisePool.query(
-          "INSERT INTO group_product_visibility (group_id, product_id, is_visible, created_at, updated_at) VALUES (?, ?, ?, NOW(), NOW())",
-          [gv.group_id, id, gv.is_visible ?? true]
-        );
-      }
-    }
+//     if (updates.length) {
+//       updates.push("updated_at=?");
+//       params.push(getCurrentMysqlDatetime(), id);
+//       await promisePool.query(`UPDATE products SET ${updates.join(", ")} WHERE id=?`, params);
+//     }
 
-    res.status(200).json({ message: "Product updated successfully" });
-  } catch (e) {
-    console.error("❌ Error updating product:", e);
-    res.status(500).json({ message: "Internal Server Error", error: e.message });
-  }
-});
+//     if (Array.isArray(group_visibility)) {
+//       await promisePool.query("DELETE FROM group_product_visibility WHERE product_id=?", [id]);
+//       for (const gv of group_visibility) {
+//         await promisePool.query(
+//           "INSERT INTO group_product_visibility (group_id, product_id, is_visible, created_at, updated_at) VALUES (?, ?, ?, NOW(), NOW())",
+//           [gv.group_id, id, gv.is_visible ?? true]
+//         );
+//       }
+//     }
+
+//     res.status(200).json({ message: "Product updated successfully" });
+//   } catch (e) {
+//     console.error("❌ Error updating product:", e);
+//     res.status(500).json({ message: "Internal Server Error", error: e.message });
+//   }
+// });
 
 /* -------------------------------------------------------------------------- */
 /* ✅ DELETE PRODUCT */
