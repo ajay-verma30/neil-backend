@@ -6,7 +6,6 @@ const Authtoken = require("../Auth/tokenAuthentication");
 const multer = require("multer");
 const cloudinary = require("./cloudinary");
 const streamifier = require("streamifier");
-const { v2: cloudinary } = require("cloudinary");
 const { extractPublicId } = require("cloudinary-build-url");
 
 const pool = mysqlconnect();
