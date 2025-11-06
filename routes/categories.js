@@ -65,11 +65,20 @@ route.get('/all', Authtoken, authorizeRoles("Super Admin", "Admin", "Manager"), 
     try {
         const { org_id } = req.query; 
 
-        let query = "SELECT id, title, org_id, created_by, created_at FROM categories";
+        let query = `
+            SELECT 
+                c.id, 
+                c.title, 
+                c.created_by, 
+                c.created_at, 
+                o.title AS organization 
+            FROM categories c
+            LEFT JOIN organizations o ON c.org_id = o.id
+        `;
         const params = [];
 
         if (org_id) {
-            query += " WHERE org_id = ?";
+            query += " WHERE c.org_id = ?";
             params.push(org_id);
         }
 
