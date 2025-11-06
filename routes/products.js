@@ -88,7 +88,7 @@ route.post(
       const productId = nanoid(12);
       const insertProduct = `
         INSERT INTO products 
-        (id, title, description, sku, category, price,actual_price org_id${sub_cat ? ", sub_cat" : ""}, created_at)
+        (id, title, description, sku, category, price,actual_price, org_id${sub_cat ? ", sub_cat" : ""}, created_at)
         VALUES (?, ?, ?, ?, ?, ?,?, ?${sub_cat ? ", ?" : ""}, NOW())
       `;
       const params = [productId, title, description, sku, category, price,actual_price, org_id || null];
