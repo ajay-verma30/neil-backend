@@ -4,9 +4,12 @@ const { nanoid } = require("nanoid");
 const mysqlconnect = require("../db/conn");
 const Authtoken = require("../Auth/tokenAuthentication");
 const multer = require("multer");
-const cloudinary = require("./cloudinary");
+const {
+  uploadToCloudinary,
+  deleteFromCloudinary,
+  extractPublicId
+} = require("./cloudinary");
 const streamifier = require("streamifier");
-const { extractPublicId } = require("cloudinary-build-url");
 
 const pool = mysqlconnect();
 const promisePool = pool.promise();
@@ -33,17 +36,17 @@ const upload = multer({
 }).any();
 
 // ✅ Helper: Upload buffer to Cloudinary
-const uploadToCloudinary = (buffer, folder) =>
-  new Promise((resolve, reject) => {
-    const stream = cloudinary.uploader.upload_stream(
-      { folder },
-      (error, result) => {
-        if (error) reject(error);
-        else resolve(result.secure_url);
-      }
-    );
-    streamifier.createReadStream(buffer).pipe(stream);
-  });
+// const uploadToCloudinary = (buffer, folder) =>
+//   new Promise((resolve, reject) => {
+//     const stream = cloudinary.uploader.upload_stream(
+//       { folder },
+//       (error, result) => {
+//         if (error) reject(error);
+//         else resolve(result.secure_url);
+//       }
+//     );
+//     streamifier.createReadStream(buffer).pipe(stream);
+//   });
 
 /* -------------------------------------------------------------------------- */
 /* ✅ CREATE PRODUCT (Cloudinary-based) */
