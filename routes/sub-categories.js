@@ -17,13 +17,13 @@ route.post("/new", Authtoken, async (req, res) => {
   const conn = await promiseConn.getConnection();
   try {
     const createdAt = getCurrentMysqlDatetime();
-    const { title, category, org_id } = req.body;
+    const { title, category_id, org_id } = req.body; // updated
     const user = req.user;
 
     // ✅ Required fields check
-    if (!title || !category) {
+    if (!title || !category_id) {
       return res.status(400).json({
-        message: "Both 'title' and 'category' are required.",
+        message: "Both 'title' and 'category_id' are required.",
       });
     }
 
@@ -55,23 +55,23 @@ route.post("/new", Authtoken, async (req, res) => {
       `SELECT id 
        FROM sub_categories 
        WHERE title = ? 
-         AND category = ? 
+         AND category_id = ? 
          AND (
            (org_id IS NULL AND ? IS NULL) OR org_id = ?
          )`,
-      [title, category, orgIdValue, orgIdValue]
+      [title, category_id, orgIdValue, orgIdValue]
     );
 
     if (existing.length > 0) {
       return res.status(409).json({
-        message: `Sub-category '${title}' already exists in '${category}'.`,
+        message: `Sub-category '${title}' already exists in this category.`,
       });
     }
 
     // ✅ Insert the new sub-category
     const [insertResult] = await conn.query(
-      "INSERT INTO sub_categories (title, category, org_id, created_at) VALUES (?, ?, ?, ?)",
-      [title, category, orgIdValue, createdAt]
+      "INSERT INTO sub_categories (title, category_id, org_id, created_at) VALUES (?, ?, ?, ?)",
+      [title, category_id, orgIdValue, createdAt]
     );
 
     if (insertResult.affectedRows === 0) {
@@ -83,7 +83,7 @@ route.post("/new", Authtoken, async (req, res) => {
       data: {
         id: insertResult.insertId,
         title,
-        category,
+        category_id,
         org_id: orgIdValue,
       },
     });
@@ -94,7 +94,7 @@ route.post("/new", Authtoken, async (req, res) => {
       error: err.message,
     });
   } finally {
-    conn.release();
+    if (conn) conn.release();
   }
 });
 
@@ -105,39 +105,55 @@ route.post("/new", Authtoken, async (req, res) => {
 route.get("/all", Authtoken, async (req, res) => {
   const conn = await promiseConn.getConnection();
   try {
-    const { title, category } = req.query;
+    const { title, category_id } = req.query; // filters
     const conditions = [];
     const params = [];
 
+    // Filter by sub-category title
     if (title) {
-      conditions.push("title LIKE ?");
+      conditions.push("sc.title LIKE ?");
       params.push(`%${title}%`);
     }
-    if (category) {
-      conditions.push("category = ?");
-      params.push(category);
+
+    // Filter by category
+    if (category_id) {
+      conditions.push("sc.category_id = ?");
+      params.push(category_id);
     }
 
-    const whereClause = conditions.length
-      ? "WHERE " + conditions.join(" AND ")
-      : "";
+    const whereClause = conditions.length ? "WHERE " + conditions.join(" AND ") : "";
 
-    const [rows] = await conn.query(
-      `SELECT * FROM sub_categories ${whereClause} ORDER BY created_at DESC`,
-      params
-    );
+    // Join with categories and organizations to get titles
+    const query = `
+      SELECT 
+        sc.id,
+        sc.title,
+        sc.category_id,
+        c.title AS category_title,
+        sc.org_id,
+        o.title AS org_title,
+        sc.created_at
+      FROM sub_categories sc
+      JOIN categories c ON sc.category_id = c.id
+      LEFT JOIN organizations o ON sc.org_id = o.id
+      ${whereClause}
+      ORDER BY sc.created_at DESC
+    `;
 
-    if (!rows.length)
+    const [rows] = await conn.query(query, params);
+
+    if (!rows.length) {
       return res.status(404).json({ message: "No sub-categories found." });
+    }
 
     res.status(200).json({ subCategories: rows });
   } catch (err) {
-    console.error("❌ Error in GET /subcategories/all:", err);
+    console.error("❌ Error in GET /sub-categories/all:", err);
     res
       .status(500)
       .json({ message: "Internal Server Error", error: err.message });
   } finally {
-    conn.release();
+    if (conn) conn.release();
   }
 });
 
@@ -148,24 +164,37 @@ route.get("/:id", Authtoken, async (req, res) => {
   const conn = await promiseConn.getConnection();
   try {
     const { id } = req.params;
-    const [rows] = await conn.query(
-      "SELECT * FROM sub_categories WHERE id = ?",
-      [id]
-    );
 
-    if (!rows.length)
+    const query = `
+      SELECT 
+        sc.id,
+        sc.title,
+        sc.category_id,
+        c.title AS category_title,
+        sc.org_id,
+        o.title AS org_title,
+        sc.created_at
+      FROM sub_categories sc
+      JOIN categories c ON sc.category_id = c.id
+      LEFT JOIN organizations o ON sc.org_id = o.id
+      WHERE sc.id = ?
+    `;
+
+    const [rows] = await conn.query(query, [id]);
+
+    if (!rows.length) {
       return res.status(404).json({ message: "Sub-category not found." });
+    }
 
     res.status(200).json({ subCategory: rows[0] });
   } catch (err) {
     console.error("❌ Error in GET /subcategories/:id:", err);
-    res
-      .status(500)
-      .json({ message: "Internal Server Error", error: err.message });
+    res.status(500).json({ message: "Internal Server Error", error: err.message });
   } finally {
-    conn.release();
+    if (conn) conn.release();
   }
 });
+
 
 /* -------------------------------------------------------------------------- */
 /* 🗑️ DELETE SUB-CATEGORY */
@@ -174,26 +203,50 @@ route.delete("/:id", Authtoken, async (req, res) => {
   const conn = await promiseConn.getConnection();
   try {
     const { id } = req.params;
+    const user = req.user;
 
+    // Fetch sub-category first to check org ownership
+    const [rows] = await conn.query(
+      "SELECT org_id FROM sub_categories WHERE id = ?",
+      [id]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({ message: "Sub-category not found." });
+    }
+
+    const subCategory = rows[0];
+
+    // Only allow deletion if:
+    // - Super Admin, or
+    // - Non-Super Admin deleting their own org's sub-category
+    if (user.role !== "Super Admin" && String(subCategory.org_id) !== String(user.org_id)) {
+      return res.status(403).json({
+        message: "You are not authorized to delete this sub-category.",
+      });
+    }
+
+    // Perform deletion
     const [result] = await conn.query(
       "DELETE FROM sub_categories WHERE id = ?",
       [id]
     );
 
-    if (result.affectedRows === 0)
-      return res.status(404).json({ message: "Sub-category not found." });
-
-    res
-      .status(200)
-      .json({ message: "Sub-category deleted successfully.", id });
+    res.status(200).json({
+      success: true,
+      message: "Sub-category deleted successfully.",
+      id,
+    });
   } catch (err) {
     console.error("❌ Error in DELETE /subcategories/:id:", err);
-    res
-      .status(500)
-      .json({ message: "Internal Server Error", error: err.message });
+    res.status(500).json({
+      message: "Internal Server Error",
+      error: err.message,
+    });
   } finally {
-    conn.release();
+    if (conn) conn.release();
   }
 });
+
 
 module.exports = route;
