@@ -68,6 +68,7 @@ route.post(
         sku,
         category,
         price,
+        actual_price,
         variants, // This now contains size/price/stock details inside each variant
         group_visibility,
         sub_cat,
@@ -87,10 +88,10 @@ route.post(
       const productId = nanoid(12);
       const insertProduct = `
         INSERT INTO products 
-        (id, title, description, sku, category, price, org_id${sub_cat ? ", sub_cat" : ""}, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?${sub_cat ? ", ?" : ""}, NOW())
+        (id, title, description, sku, category, price,actual_price org_id${sub_cat ? ", sub_cat" : ""}, created_at)
+        VALUES (?, ?, ?, ?, ?, ?,?, ?${sub_cat ? ", ?" : ""}, NOW())
       `;
-      const params = [productId, title, description, sku, category, price, org_id || null];
+      const params = [productId, title, description, sku, category, price,actual_price, org_id || null];
       if (sub_cat) params.push(sub_cat);
       await conn.query(insertProduct, params);
 
