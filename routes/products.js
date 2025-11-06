@@ -63,17 +63,17 @@ route.post(
 
       const files = req.files || [];
       const {
-        title,
-        description,
-        sku,
-        category,
-        price,
-        actual_price,
-        variants, // This now contains size/price/stock details inside each variant
-        group_visibility,
-        sub_cat,
-        org_id: orgIdFromFrontend,
-      } = req.body;
+  title,
+  description,
+  sku,
+  price,
+  actual_price,
+  variants,
+  group_visibility,
+  category_id,
+  sub_category_id,
+  org_id: orgIdFromFrontend
+} = req.body;
 
       const requester = req.user;
       const org_id =
@@ -81,18 +81,17 @@ route.post(
           ? orgIdFromFrontend || null
           : requester.org_id || orgIdFromFrontend || null;
 
-      if (!title || !description || !sku || !category || !price)
-        return res.status(400).json({ message: "Missing required fields" });
+      if (!title || !description || !sku || !price || !category_id)
+  return res.status(400).json({ message: "Missing required fields" });
 
       // 🧾 Create base product
       const productId = nanoid(12);
       const insertProduct = `
         INSERT INTO products 
-        (id, title, description, sku, category, price,actual_price, org_id${sub_cat ? ", sub_cat" : ""}, created_at)
-        VALUES (?, ?, ?, ?, ?, ?,?, ?${sub_cat ? ", ?" : ""}, NOW())
+        (id, title, description, sku, category_id,sub_category_id, price,actual_price, org_id, created_at)
+        VALUES (?, ?, ?, ?, ?, ?,?, ?,?, NOW())
       `;
-      const params = [productId, title, description, sku, category, price,actual_price, org_id || null];
-      if (sub_cat) params.push(sub_cat);
+      const params = [productId, title, description, sku, category_id,sub_category_id,sub_category_id, price,actual_price, org_id || null];
       await conn.query(insertProduct, params);
 
       // 🖼 Upload product images to Cloudinary (UNCHANGED)
@@ -202,6 +201,7 @@ route.get("/all-products", Authtoken, async (req, res) => {
   try {
     const { title, sku, isActive } = req.query;
     const requester = req.user;
+
     const where = [];
     const params = [];
 
@@ -227,7 +227,8 @@ route.get("/all-products", Authtoken, async (req, res) => {
       params.push(`%${sku}%`);
     }
     if (typeof isActive !== "undefined") {
-      where.push(isActive === "true" || isActive === "1" ? "isActive=TRUE" : "isActive=FALSE");
+      where.push("isActive = ?");
+      params.push(isActive === "true" || isActive === "1" ? 1 : 0);
     }
 
     const whereSql = where.length ? "WHERE " + where.join(" AND ") : "";
@@ -237,20 +238,21 @@ route.get("/all-products", Authtoken, async (req, res) => {
       `SELECT * FROM products ${whereSql} ORDER BY created_at DESC`,
       params
     );
-    if (!products.length) return res.status(404).json({ message: "No products found" });
+
+    // Return empty array if no products found
+    if (!products.length) return res.status(200).json({ products: [] });
 
     const productIds = products.map((p) => p.id);
 
-    // 🧩 Fix 1: Dynamic placeholders for MySQL IN clause
+    // 🧩 Fetch variants for all products
     const productPlaceholders = productIds.map(() => "?").join(",");
-
-    // 🎨 Fetch variants
     const [variants] = await conn.query(
-      `SELECT id, product_id, color, sku, price 
-       FROM product_variants 
+      `SELECT id, product_id, color, sku
+       FROM product_variants
        WHERE product_id IN (${productPlaceholders})`,
       productIds
     );
+
     const variantIds = variants.map((v) => v.id);
 
     // 🖼 Fetch variant images
@@ -258,8 +260,8 @@ route.get("/all-products", Authtoken, async (req, res) => {
     if (variantIds.length) {
       const variantPlaceholders = variantIds.map(() => "?").join(",");
       [variantImages] = await conn.query(
-        `SELECT variant_id, url, type 
-         FROM variant_images 
+        `SELECT variant_id, url, type
+         FROM variant_images
          WHERE variant_id IN (${variantPlaceholders})`,
         variantIds
       );
@@ -270,25 +272,21 @@ route.get("/all-products", Authtoken, async (req, res) => {
     if (variantIds.length) {
       const variantPlaceholders = variantIds.map(() => "?").join(",");
       [sizeAttributes] = await conn.query(
-        `SELECT 
-            variant_id, 
-            size AS name, 
-            price_adjustment AS adjustment, 
-            stock_quantity AS stock 
-         FROM variant_size_attributes 
+        `SELECT variant_id, size AS name, price_adjustment AS adjustment, stock_quantity AS stock
+         FROM variant_size_attributes
          WHERE variant_id IN (${variantPlaceholders})`,
         variantIds
       );
     }
 
-    // 🧠 Group variants
+    // 🧠 Combine variants with images and attributes
     const variantsWithAttributes = variants.map((v) => ({
       ...v,
       images: variantImages.filter((img) => img.variant_id === v.id),
       attributes: sizeAttributes.filter((attr) => attr.variant_id === v.id),
     }));
 
-    // 🧱 Combine into product structure
+    // 🧱 Combine products with their variants
     const result = products.map((p) => ({
       ...p,
       variants: variantsWithAttributes.filter((v) => v.product_id === p.id),
@@ -302,6 +300,7 @@ route.get("/all-products", Authtoken, async (req, res) => {
     if (conn) conn.release();
   }
 });
+
 
 
 // 📚 Get all categories and subcategories (for sidebar)
@@ -401,10 +400,13 @@ route.get("/:id", Authtoken, async (req, res) => {
     const { id } = req.params;
 
     // 1️⃣ Fetch main product
-    const [productRows] = await conn.query("SELECT * FROM products WHERE id = ?", [id]);
-    if (!productRows.length)
+    const [productRows] = await conn.query(
+      "SELECT * FROM products WHERE id = ?",
+      [id]
+    );
+    if (!productRows.length) {
       return res.status(404).json({ message: "Product not found" });
-
+    }
     const product = productRows[0];
 
     // 2️⃣ Fetch product images
@@ -415,10 +417,11 @@ route.get("/:id", Authtoken, async (req, res) => {
 
     // 3️⃣ Fetch product variants
     const [variants] = await conn.query(
-      "SELECT id, product_id, color, sku, price FROM product_variants WHERE product_id = ?",
+      "SELECT id, product_id, color, sku FROM product_variants WHERE product_id = ?",
       [id]
     );
 
+    // 4️⃣ If no variants, return product with empty variants
     if (!variants.length) {
       const [groupVis] = await conn.query(
         "SELECT group_id, is_visible FROM group_product_visibility WHERE product_id = ?",
@@ -435,34 +438,38 @@ route.get("/:id", Authtoken, async (req, res) => {
       });
     }
 
-    const variantIds = variants.map(v => v.id);
+    const variantIds = variants.map((v) => v.id);
 
-    // 4️⃣ Fetch variant images
-    const [variantImages] = await conn.query(
-      `SELECT id, variant_id, url, type 
-       FROM variant_images 
-       WHERE variant_id IN (?)`,
-      [variantIds]
-    );
+    // 5️⃣ Fetch variant images
+    let variantImages = [];
+    if (variantIds.length) {
+      const placeholders = variantIds.map(() => "?").join(",");
+      [variantImages] = await conn.query(
+        `SELECT id, variant_id, url, type
+         FROM variant_images
+         WHERE variant_id IN (${placeholders})`,
+        variantIds
+      );
+    }
 
-    // 5️⃣ Fetch variant size attributes
-    const [sizeAttributes] = await conn.query(
-      `SELECT 
-          variant_id, 
-          size AS name, 
-          price_adjustment AS adjustment, 
-          stock_quantity AS stock
-       FROM variant_size_attributes
-       WHERE variant_id IN (?)`,
-      [variantIds]
-    );
+    // 6️⃣ Fetch variant size attributes
+    let sizeAttributes = [];
+    if (variantIds.length) {
+      const placeholders = variantIds.map(() => "?").join(",");
+      [sizeAttributes] = await conn.query(
+        `SELECT variant_id, size AS name, price_adjustment AS adjustment, stock_quantity AS stock
+         FROM variant_size_attributes
+         WHERE variant_id IN (${placeholders})`,
+        variantIds
+      );
+    }
 
-    // 6️⃣ Merge variant data properly
-    const variantsWithDetails = variants.map(v => {
-      const imgs = variantImages.filter(i => i.variant_id === v.id);
+    // 7️⃣ Merge variants with images and attributes
+    const variantsWithDetails = variants.map((v) => {
+      const imgs = variantImages.filter((i) => i.variant_id === v.id);
       const attrs = sizeAttributes
-        .filter(a => a.variant_id === v.id)
-        .map(a => ({
+        .filter((a) => a.variant_id === v.id)
+        .map((a) => ({
           ...a,
           adjustment: Number(a.adjustment || 0).toFixed(2),
           stock: Number(a.stock || 0),
@@ -472,17 +479,17 @@ route.get("/:id", Authtoken, async (req, res) => {
       return {
         ...v,
         images: imgs,
-        attributes: attrs, // 🧩 this was missing in your response
+        attributes: attrs,
       };
     });
 
-    // 7️⃣ Group visibility
+    // 8️⃣ Fetch group visibility
     const [groupVis] = await conn.query(
       "SELECT group_id, is_visible FROM group_product_visibility WHERE product_id = ?",
       [id]
     );
 
-    // 8️⃣ Final Response
+    // 9️⃣ Return full product details
     res.status(200).json({
       product: {
         ...product,
@@ -498,6 +505,7 @@ route.get("/:id", Authtoken, async (req, res) => {
     if (conn) conn.release();
   }
 });
+
 
 
 
@@ -553,7 +561,7 @@ route.get("/:id", Authtoken, async (req, res) => {
 
 
 /* -------------------------------------------------------------------------- */
-/* ✏️ PATCH UPDATE PRODUCT (Non-Destructive/Upsert Logic) */
+/* ✏️ PATCH UPDATE PRODUCT (Non-Destructive / Upsert Logic) */
 /* -------------------------------------------------------------------------- */
 route.patch(
   "/edit/:id",
@@ -577,30 +585,33 @@ route.patch(
         group_visibility,
         sub_cat,
         org_id: orgIdFromFrontend,
-        deleted_images, 
+        deleted_images,
         deleted_variants,
       } = req.body;
 
-      const [productCheck] = await conn.query(
+      // 1️⃣ Check product exists
+      const [productRows] = await conn.query(
         "SELECT * FROM products WHERE id = ?",
         [productId]
       );
-      if (!productCheck.length)
-        return res.status(404).json({ message: "Product not found" });
+      if (!productRows.length) return res.status(404).json({ message: "Product not found" });
 
       const requester = req.user;
       const org_id =
         requester.role === "Super Admin"
-          ? orgIdFromFrontend || productCheck[0].org_id
-          : requester.org_id || productCheck[0].org_id; 
+          ? orgIdFromFrontend || productRows[0].org_id
+          : requester.org_id || productRows[0].org_id;
+
+      // 2️⃣ Update product fields dynamically
       const updateFields = [];
       const params = [];
-      if (title) { updateFields.push("title = ?"); params.push(title); }
-      if (description) { updateFields.push("description = ?"); params.push(description); }
-      if (sku) { updateFields.push("sku = ?"); params.push(sku); }
-      if (category) { updateFields.push("category = ?"); params.push(category); }
-      if (price) { updateFields.push("price = ?"); params.push(price); }
-      if (sub_cat !== undefined) { updateFields.push("sub_cat = ?"); params.push(sub_cat || null); }
+
+      if (title) updateFields.push("title = ?"), params.push(title);
+      if (description) updateFields.push("description = ?"), params.push(description);
+      if (sku) updateFields.push("sku = ?"), params.push(sku);
+      if (category) updateFields.push("category = ?"), params.push(category);
+      if (price) updateFields.push("price = ?"), params.push(price);
+      if (sub_cat !== undefined) updateFields.push("sub_category_id = ?"), params.push(sub_cat || null);
 
       if (updateFields.length > 0) {
         await conn.query(
@@ -608,26 +619,28 @@ route.patch(
           [...params, productId]
         );
       }
+
+      // 3️⃣ Delete selected images
       if (deleted_images) {
         let parsedDeletes = [];
-        try {
-          parsedDeletes = JSON.parse(deleted_images);
-        } catch {}
+        try { parsedDeletes = JSON.parse(deleted_images); } catch {}
         if (Array.isArray(parsedDeletes) && parsedDeletes.length) {
-            const [imagesToCleanup] = await conn.query(
-                `SELECT url FROM product_images WHERE product_id = ? AND url IN (?)`,
-                [productId, parsedDeletes]
-            );
-            for (const image of imagesToCleanup) {
-                const publicId = extractPublicId(image.url); 
-                if (publicId) await deleteFromCloudinary(publicId, "products");
-            }
-            await conn.query(
-                `DELETE FROM product_images WHERE product_id = ? AND url IN (?)`,
-                [productId, parsedDeletes]
-            );
+          const [imagesToDelete] = await conn.query(
+            `SELECT url FROM product_images WHERE product_id = ? AND url IN (?)`,
+            [productId, parsedDeletes]
+          );
+          for (const img of imagesToDelete) {
+            const publicId = extractPublicId(img.url);
+            if (publicId) await deleteFromCloudinary(publicId, "products");
+          }
+          await conn.query(
+            `DELETE FROM product_images WHERE product_id = ? AND url IN (?)`,
+            [productId, parsedDeletes]
+          );
         }
       }
+
+      // 4️⃣ Add new product images
       const productImages = files.filter((f) => f.fieldname === "productImages");
       for (const file of productImages) {
         const url = await uploadToCloudinary(file.buffer, "products");
@@ -636,122 +649,94 @@ route.patch(
           [productId, url]
         );
       }
+
+      // 5️⃣ Delete selected variants
       if (deleted_variants) {
         let parsedDeletedVariants = [];
-        try {
-          parsedDeletedVariants = JSON.parse(deleted_variants);
-        } catch {}
+        try { parsedDeletedVariants = JSON.parse(deleted_variants); } catch {}
         if (Array.isArray(parsedDeletedVariants) && parsedDeletedVariants.length) {
-          await conn.query(
-            "DELETE FROM variant_images WHERE variant_id IN (?)",
-            [parsedDeletedVariants]
-          );
-          await conn.query(
-            "DELETE FROM variant_size_attributes WHERE variant_id IN (?)",
-            [parsedDeletedVariants]
-          );
+          await conn.query("DELETE FROM variant_images WHERE variant_id IN (?)", [parsedDeletedVariants]);
+          await conn.query("DELETE FROM variant_size_attributes WHERE variant_id IN (?)", [parsedDeletedVariants]);
           await conn.query(
             "DELETE FROM product_variants WHERE id IN (?) AND product_id = ?",
             [parsedDeletedVariants, productId]
           );
         }
       }
+
+      // 6️⃣ Upsert variants and sizes
       let parsedVariants = [];
-      try {
-        parsedVariants = JSON.parse(variants || "[]");
-      } catch {
-        parsedVariants = [];
-      }
+      try { parsedVariants = JSON.parse(variants || "[]"); } catch {}
       for (let i = 0; i < parsedVariants.length; i++) {
         const v = parsedVariants[i];
         if (!v.sku) continue;
-        let currentVariantId;
+
+        let variantId;
         if (v.id) {
-          currentVariantId = v.id;
+          variantId = v.id;
           await conn.query(
             "UPDATE product_variants SET color = ?, sku = ? WHERE id = ? AND product_id = ?",
-            [v.color || null, v.sku, currentVariantId, productId]
+            [v.color || null, v.sku, variantId, productId]
           );
-        } 
-        else {
-          const [variantRes] = await conn.query(
+        } else {
+          const [inserted] = await conn.query(
             "INSERT INTO product_variants (product_id, color, sku) VALUES (?, ?, ?)",
             [productId, v.color || null, v.sku]
           );
-          currentVariantId = variantRes.insertId;
+          variantId = inserted.insertId;
         }
+
+        // Upsert sizes
         let parsedSizes = [];
-        try {
-          parsedSizes = Array.isArray(v.sizes)
-            ? v.sizes
-            : JSON.parse(v.sizes || "[]");
-        } catch {}
+        try { parsedSizes = Array.isArray(v.sizes) ? v.sizes : JSON.parse(v.sizes || "[]"); } catch {}
         for (const sizeAttr of parsedSizes) {
           if (!sizeAttr.name) continue;
-          const [existingSize] = await conn.query(
-  `SELECT variant_id FROM variant_size_attributes WHERE variant_id = ? AND size = ?`, 
-  [currentVariantId, sizeAttr.name]
-);
-
-          const adjustment = parseFloat(sizeAttr.adjustment) || 0.0;
+          const adjustment = parseFloat(sizeAttr.adjustment) || 0;
           const stock = parseInt(sizeAttr.stock) || 0;
+
+          const [existingSize] = await conn.query(
+            "SELECT variant_id FROM variant_size_attributes WHERE variant_id = ? AND size = ?",
+            [variantId, sizeAttr.name]
+          );
 
           if (existingSize.length > 0) {
             await conn.query(
-    `UPDATE variant_size_attributes 
-     SET price_adjustment = ?, stock_quantity = ? 
-     WHERE variant_id = ? AND size = ?`, 
-    [adjustment, stock, currentVariantId, sizeAttr.name]
-  );
+              "UPDATE variant_size_attributes SET price_adjustment = ?, stock_quantity = ? WHERE variant_id = ? AND size = ?",
+              [adjustment, stock, variantId, sizeAttr.name]
+            );
           } else {
-            // Insert New Size
             await conn.query(
-              `INSERT INTO variant_size_attributes 
-                (variant_id, size, price_adjustment, stock_quantity) 
-                VALUES (?, ?, ?, ?)`,
-              [currentVariantId, sizeAttr.name, adjustment, stock]
+              "INSERT INTO variant_size_attributes (variant_id, size, price_adjustment, stock_quantity) VALUES (?, ?, ?, ?)",
+              [variantId, sizeAttr.name, adjustment, stock]
             );
           }
-        } // End of size loop
+        }
 
-        // D. Upload new variant images (always insert if present in files)
-        const variantFiles = files.filter((f) =>
-          f.fieldname.startsWith(`variant-${i}-`)
-        );
+        // Upload variant images
+        const variantFiles = files.filter((f) => f.fieldname.startsWith(`variant-${i}-`));
         for (const file of variantFiles) {
           const type = file.fieldname.split("-")[2] || "front";
-          const url = await uploadToCloudinary(file.buffer, "variants"); // ASSUME this helper exists
+          const url = await uploadToCloudinary(file.buffer, "variants");
           await conn.query(
             "INSERT INTO variant_images (variant_id, url, type) VALUES (?, ?, ?)",
-            [currentVariantId, url, type]
+            [variantId, url, type]
           );
         }
-      } // End of variant loop
+      }
 
-      // 5. 👀 Group visibility (Replace fully if provided, otherwise leave untouched)
+      // 7️⃣ Update group visibility
       if (group_visibility !== undefined) {
-        // ... (Your existing group visibility DELETE and INSERT logic here, as it's a replacement)
         let parsedGV = [];
-        try {
-            parsedGV =
-            typeof group_visibility === "string"
-                ? JSON.parse(group_visibility)
-                : group_visibility;
-        } catch { parsedGV = []; }
+        try { parsedGV = typeof group_visibility === "string" ? JSON.parse(group_visibility) : group_visibility; } catch { parsedGV = []; }
 
-        await conn.query("DELETE FROM group_product_visibility WHERE product_id = ?", [
-            productId,
-        ]);
-
+        await conn.query("DELETE FROM group_product_visibility WHERE product_id = ?", [productId]);
         if (Array.isArray(parsedGV) && parsedGV.length) {
-            for (const gv of parsedGV) {
+          for (const gv of parsedGV) {
             await conn.query(
-                `INSERT INTO group_product_visibility 
-                (group_id, product_id, is_visible, created_at, updated_at)
-                VALUES (?, ?, ?, NOW(), NOW())`,
-                [gv.group_id, productId, gv.is_visible ?? true]
+              "INSERT INTO group_product_visibility (group_id, product_id, is_visible, created_at, updated_at) VALUES (?, ?, ?, NOW(), NOW())",
+              [gv.group_id, productId, gv.is_visible ?? true]
             );
-            }
+          }
         }
       }
 
@@ -766,6 +751,7 @@ route.patch(
     }
   }
 );
+
 
 
 
@@ -847,70 +833,70 @@ route.patch(
 
 /* -------------------------------------------------------------------------- */
 /* ✅ DELETE PRODUCT */
-/* -------------------------------------------------------------------------- */
 route.delete("/:id", Authtoken, async (req, res) => {
   const conn = await promisePool.getConnection();
 
   try {
     const { id } = req.params;
 
-    // 🧾 Find the product
-    const [products] = await conn.query("SELECT * FROM products WHERE id=?", [id]);
+    // 1️⃣ Check if product exists
+    const [products] = await conn.query("SELECT * FROM products WHERE id = ?", [id]);
     if (!products.length)
       return res.status(404).json({ message: "Product not found" });
 
     await conn.beginTransaction();
 
-    // 🖼 Fetch all related images (product + variants)
+    // 2️⃣ Fetch product images
     const [productImages] = await conn.query(
-      "SELECT url FROM product_images WHERE product_id=?",
+      "SELECT url FROM product_images WHERE product_id = ?",
       [id]
     );
 
+    // 3️⃣ Fetch variants and their images
     const [variants] = await conn.query(
-      "SELECT id FROM product_variants WHERE product_id=?",
+      "SELECT id FROM product_variants WHERE product_id = ?",
       [id]
     );
+    const variantIds = variants.map((v) => v.id);
 
-    let variantIds = variants.map((v) => v.id);
-    const [variantImages] = variantIds.length
-      ? await conn.query(
-          "SELECT url FROM variant_images WHERE variant_id IN (?)",
-          [variantIds]
-        )
-      : [[]];
+    let variantImages = [];
+    if (variantIds.length) {
+      [variantImages] = await conn.query(
+        "SELECT url FROM variant_images WHERE variant_id IN (?)",
+        [variantIds]
+      );
+    }
 
-    // 🔥 Delete images from Cloudinary
+    // 4️⃣ Delete all images from Cloudinary
     const allImages = [...productImages, ...variantImages];
     for (const img of allImages) {
       try {
-        // Extract Cloudinary public_id from URL
-        const urlParts = img.url.split("/");
-        const folderAndFile = urlParts.slice(-2).join("/"); // e.g. "products/abc123.jpg"
-        const publicId = folderAndFile.split(".")[0]; // remove file extension
-        await cloudinary.uploader.destroy(publicId);
+        // Extract Cloudinary public_id from URL (handles folders)
+        const matches = img.url.match(/\/(?:v\d+\/)?(.+)\.\w+$/);
+        const publicId = matches ? matches[1] : null;
+        if (publicId) await cloudinary.uploader.destroy(publicId);
       } catch (cloudErr) {
         console.warn("⚠️ Failed to delete Cloudinary image:", cloudErr.message);
       }
     }
 
-    // 🧹 Delete DB records (cascade)
-    await conn.query("DELETE FROM variant_images WHERE variant_id IN (?)", [
-      variantIds.length ? variantIds : [0],
-    ]);
-    await conn.query("DELETE FROM product_images WHERE product_id=?", [id]);
-    await conn.query("DELETE FROM product_variants WHERE product_id=?", [id]);
-    await conn.query("DELETE FROM group_product_visibility WHERE product_id=?", [id]);
-    await conn.query("DELETE FROM products WHERE id=?", [id]);
+    // 5️⃣ Delete DB records
+    if (variantIds.length) {
+      await conn.query("DELETE FROM variant_images WHERE variant_id IN (?)", [variantIds]);
+      await conn.query("DELETE FROM variant_size_attributes WHERE variant_id IN (?)", [variantIds]);
+      await conn.query("DELETE FROM product_variants WHERE id IN (?)", [variantIds]);
+    }
+
+    await conn.query("DELETE FROM product_images WHERE product_id = ?", [id]);
+    await conn.query("DELETE FROM group_product_visibility WHERE product_id = ?", [id]);
+    await conn.query("DELETE FROM products WHERE id = ?", [id]);
 
     await conn.commit();
     res.status(200).json({ message: "✅ Product deleted successfully" });
   } catch (e) {
     if (conn) await conn.rollback();
     console.error("❌ Error deleting product:", e);
-    res
-      .status(500)
-      .json({ message: "Internal Server Error", error: e.message });
+    res.status(500).json({ message: "Internal Server Error", error: e.message });
   } finally {
     if (conn) conn.release();
   }
