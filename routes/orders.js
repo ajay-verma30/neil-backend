@@ -524,7 +524,7 @@ for (let i = 0; i < cart.length; i++) {
       ct.image,
       ct.sizes,
       ct.quantity,
-      ct.preview_image_url,
+      c.preview_image_url,
       lp.name AS placement_name,
       lp.view AS placement_view,
       lv.color AS logo_color,
