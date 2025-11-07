@@ -6,7 +6,7 @@ const path = require("path");
 const streamifier = require("streamifier"); 
 const multer = require("multer");
 const mysqlconnect = require("../db/conn");
-const cloudinary = require("./cloudinary"); 
+const { cloudinary } = require("./cloudinary");
 const Authtoken = require("../Auth/tokenAuthentication");
 
 const pool = mysqlconnect();

@@ -18,7 +18,16 @@ router.post("/create", authenticateToken, async (req, res) => {
 
     const userId = req.user.id;
     const org_id = req.user.org_id;
-    const { shipping_address_id, billing_address_id, payment_method } = req.body;
+
+    // ✅ Now also expecting preview_url from frontend
+    const { 
+      shipping_address_id, 
+      billing_address_id, 
+      payment_method, 
+      preview_url 
+    } = req.body;
+
+    // 🛒 Fetch cart items
     const [cartItems] = await conn.query(
       "SELECT * FROM cart_items WHERE user_id = ? AND ordered = 0",
       [userId]
@@ -31,6 +40,7 @@ router.post("/create", authenticateToken, async (req, res) => {
         message: "No items in cart.",
       });
     }
+
     const cleanArray = (arr) =>
       arr
         .map((id) => id?.replace(/['"\\[\\]]/g, "").trim())
@@ -46,11 +56,13 @@ router.post("/create", authenticateToken, async (req, res) => {
 
     const orderId = "ORD-" + nanoid(8);
     const batchId = "BATCH-" + nanoid(6);
+
+    // ✅ Added preview_url column
     await conn.query(
       `INSERT INTO orders 
       (id, user_id, org_id, order_batch_id, shipping_address_id, billing_address_id, 
-       total_amount, cart_id, customizations_id, status, payment_status, payment_method)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Pending', 'Unpaid', ?)`,
+       total_amount, cart_id, customizations_id, preview_url, status, payment_status, payment_method)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Pending', 'Unpaid', ?)`,
       [
         orderId,
         userId,
@@ -61,34 +73,44 @@ router.post("/create", authenticateToken, async (req, res) => {
         totalAmount,
         JSON.stringify(cartIds),
         JSON.stringify(customizationIds),
+        preview_url || null, // ✅ insert the preview URL (or NULL)
         payment_method,
       ]
     );
+
+    // 🛒 Mark all items as ordered
     for (const item of cartItems) {
       await conn.query("UPDATE cart_items SET ordered = 1 WHERE id = ?", [item.id]);
     }
+
+    // 👤 Fetch user details
     const [[user]] = await conn.query(
       "SELECT f_name, l_name, email FROM users WHERE id = ?",
       [userId]
     );
-    const orderDetails = cartItems
-  .map((item) => {
-    const price = parseFloat(item.total_price || 0);
-    return `
-      <tr>
-        <td>${item.title}</td>
-        <td>${item.quantity}</td>
-        <td>$${price.toFixed(2)}</td>
-      </tr>
-    `;
-  })
-  .join("");
 
+    const orderDetails = cartItems
+      .map((item) => {
+        const price = parseFloat(item.total_price || 0);
+        return `
+          <tr>
+            <td>${item.title}</td>
+            <td>${item.quantity}</td>
+            <td>$${price.toFixed(2)}</td>
+          </tr>
+        `;
+      })
+      .join("");
 
     const emailHtml = `
       <h2>Order Confirmation - Neil Prints</h2>
       <p>Hi ${user.f_name},</p>
       <p>Thank you for your order! Your order <b>${orderId}</b> has been successfully placed.</p>
+      ${
+        preview_url
+          ? `<img src="${preview_url}" alt="Order Preview" style="max-width:300px; margin:15px 0; border-radius:8px;" />`
+          : ""
+      }
       <table border="1" cellspacing="0" cellpadding="8" style="border-collapse: collapse; width:100%; margin-top:10px;">
         <thead style="background:#f5f5f5;">
           <tr>
@@ -114,14 +136,19 @@ router.post("/create", authenticateToken, async (req, res) => {
       <p>We'll notify you when your order ships!</p>
       <p>Thank you for choosing Neil Prints!</p>
     `;
+
     await sendEmail(user.email, `Order Confirmation - ${orderId}`, emailHtml);
+
     await conn.commit();
+
     res.json({
       success: true,
       message: "Order created successfully. Confirmation email sent.",
       orderId,
       totalAmount,
+      preview_url: preview_url || null,
     });
+
   } catch (err) {
     if (conn) await conn.rollback();
     console.error("❌ Error creating order:", err);
@@ -133,6 +160,7 @@ router.post("/create", authenticateToken, async (req, res) => {
     if (conn) conn.release();
   }
 });
+
 
 router.get("/all-orders", authenticateToken, async (req, res) => {
   try {
