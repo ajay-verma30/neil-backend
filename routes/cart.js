@@ -127,5 +127,3 @@ route.post("/checkout/:user_id", authenticateToken, async (req, res) => {
 
 module.exports = route;
 
-
-module.exports = route;

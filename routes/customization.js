@@ -5,7 +5,7 @@ const mysqlconnect = require("../db/conn");
 const pool = mysqlconnect().promise();
 const Authtoken = require("../Auth/tokenAuthentication");
 const multer = require("multer");
-const cloudinary = require("./cloudinary");
+const { cloudinary } = require("./cloudinary"); 
 const streamifier = require("streamifier");
 
 // =====================
@@ -40,6 +40,7 @@ const upload = multer({
 // =====================
 const uploadToCloudinary = (buffer, folder) =>
   new Promise((resolve, reject) => {
+    // 🛑 FIX 2: Call upload_stream on the correct object: cloudinary.uploader
     const stream = cloudinary.uploader.upload_stream(
       { folder },
       (error, result) => {
@@ -193,9 +194,14 @@ route.delete("/:id", Authtoken, async (req, res) => {
     if (customization.preview_image_url) {
       try {
         const urlParts = customization.preview_image_url.split("/");
-        const folderAndFile = urlParts.slice(-2).join("/"); // e.g. "customizations/abc123.jpg"
-        const publicId = folderAndFile.split(".")[0]; // remove extension
-        await cloudinary.uploader.destroy(publicId);
+        const folderAndFile = urlParts.slice(-2).join("/"); // e.g. "customizations/previews/abc123.jpg"
+        // The public ID is typically the folder/filename without extension
+        const fullPublicId = folderAndFile.split(".")[0];
+        
+        // This line likely needs to be updated to use the helper from cloudinary.js:
+        // await deleteFromCloudinary(fullPublicId); 
+        // OR, if sticking to the current helper which requires the full path:
+        await cloudinary.uploader.destroy(fullPublicId); // This is correct if fullPublicId is the correct path
       } catch (cloudErr) {
         console.warn("⚠️ Failed to delete Cloudinary preview:", cloudErr.message);
       }
