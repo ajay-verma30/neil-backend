@@ -87,11 +87,23 @@ route.post(
       // 🧾 Create base product
       const productId = nanoid(12);
       const insertProduct = `
-        INSERT INTO products 
-        (id, title, description, sku, category_id,sub_category_id, price,actual_price, org_id, created_at)
-        VALUES (?, ?, ?, ?, ?, ?,?, ?,?, NOW())
-      `;
-      const params = [productId, title, description, sku, category_id,sub_category_id,sub_category_id, price,actual_price, org_id || null];
+  INSERT INTO products 
+  (id, title, description, sku, category_id, sub_category_id, price, actual_price, org_id, created_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+`;
+
+const params = [
+  productId,
+  title,
+  description,
+  sku,
+  category_id,
+  sub_category_id || null,
+  price,
+  actual_price,
+  org_id || null
+];
+
       await conn.query(insertProduct, params);
 
       // 🖼 Upload product images to Cloudinary (UNCHANGED)
