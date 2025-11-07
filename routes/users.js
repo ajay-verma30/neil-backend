@@ -278,16 +278,13 @@ route.post("/login", loginLimiter, async (req, res) => {
       `,
       [user.id, tokenHash]
     );
-
-    const isProduction = process.env.NODE_ENV === "production";
-    // 🍪 Set secure HTTP-only cookie
+const isProduction = process.env.NODE_ENV === "production";
 res.cookie("refreshToken", refreshToken, {
   httpOnly: true,
-  secure: isProduction, // only true on HTTPS
-  sameSite: isProduction ? "None" : "Lax", // None for cross-site (prod), Lax for local
+  secure: true, 
+  sameSite: "None", 
   maxAge: 7 * 24 * 60 * 60 * 1000,
 });
-
 
     // ✅ Send success response
     return res.status(200).json({
