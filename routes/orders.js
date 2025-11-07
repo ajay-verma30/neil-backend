@@ -19,12 +19,11 @@ router.post("/create", authenticateToken, async (req, res) => {
     const userId = req.user.id;
     const org_id = req.user.org_id;
 
-    // ✅ Now also expecting preview_url from frontend
+    // ❌ Removed 'preview_url' from req.body, it must be derived from cart items
     const { 
       shipping_address_id, 
       billing_address_id, 
       payment_method, 
-      preview_url 
     } = req.body;
 
     // 🛒 Fetch cart items
@@ -40,6 +39,9 @@ router.post("/create", authenticateToken, async (req, res) => {
         message: "No items in cart.",
       });
     }
+
+    // 💡 FIX: Get the image URL from the FIRST item to populate the single 'preview_url' column
+    const preview_url = cartItems[0].image;
 
     const cleanArray = (arr) =>
       arr
@@ -57,7 +59,7 @@ router.post("/create", authenticateToken, async (req, res) => {
     const orderId = "ORD-" + nanoid(8);
     const batchId = "BATCH-" + nanoid(6);
 
-    // ✅ Added preview_url column
+    // ✅ Insert the first item's image URL into the main orders table
     await conn.query(
       `INSERT INTO orders 
       (id, user_id, org_id, order_batch_id, shipping_address_id, billing_address_id, 
@@ -73,7 +75,7 @@ router.post("/create", authenticateToken, async (req, res) => {
         totalAmount,
         JSON.stringify(cartIds),
         JSON.stringify(customizationIds),
-        preview_url || null, // ✅ insert the preview URL (or NULL)
+        preview_url || null, // <- Passed the derived preview URL
         payment_method,
       ]
     );
@@ -94,9 +96,12 @@ router.post("/create", authenticateToken, async (req, res) => {
         const price = parseFloat(item.total_price || 0);
         return `
           <tr>
-            <td>${item.title}</td>
-            <td>${item.quantity}</td>
-            <td>$${price.toFixed(2)}</td>
+            <td>
+                <img src="${item.image}" alt="${item.title}" style="max-width:50px; height:auto; margin-right: 10px; border-radius: 4px; vertical-align: middle;">
+                ${item.title}
+            </td>
+            <td align="center">${item.quantity}</td>
+            <td align="right">$${price.toFixed(2)}</td>
           </tr>
         `;
       })
@@ -106,17 +111,12 @@ router.post("/create", authenticateToken, async (req, res) => {
       <h2>Order Confirmation - Neil Prints</h2>
       <p>Hi ${user.f_name},</p>
       <p>Thank you for your order! Your order <b>${orderId}</b> has been successfully placed.</p>
-      ${
-        preview_url
-          ? `<img src="${preview_url}" alt="Order Preview" style="max-width:300px; margin:15px 0; border-radius:8px;" />`
-          : ""
-      }
       <table border="1" cellspacing="0" cellpadding="8" style="border-collapse: collapse; width:100%; margin-top:10px;">
         <thead style="background:#f5f5f5;">
           <tr>
-            <th align="left">Product</th>
-            <th align="center">Qty</th>
-            <th align="right">Subtotal</th>
+            <th align="left" style="width: 60%">Product</th>
+            <th align="center" style="width: 20%">Qty</th>
+            <th align="right" style="width: 20%">Subtotal</th>
           </tr>
         </thead>
         <tbody>
@@ -155,11 +155,13 @@ router.post("/create", authenticateToken, async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Internal server error while creating order.",
+      error: err.sqlMessage || err.message,
     });
   } finally {
     if (conn) conn.release();
   }
 });
+
 
 
 router.get("/all-orders", authenticateToken, async (req, res) => {
