@@ -55,69 +55,70 @@ const uploadToCloudinary = (buffer, folder) =>
 // POST /new - Create Customization
 // =====================
 route.post("/new", Authtoken, upload.single("preview"), async (req, res) => {
-  let conn;
-  try {
-    conn = await pool.getConnection();
+  let conn;
+  try {
+    conn = await pool.getConnection();
 
-    let { user_id, product_variant_id, logo_variant_id, placement_id } = req.body;
+    let { user_id, product_variant_id, logo_variant_id, placement_id } = req.body;
 
-    // ✅ Only user_id is strictly required
-    if (!user_id) {
-      return res.status(400).json({ message: "⚠️ User ID is required." });
-    }
+    // ✅ Only user_id is strictly required
+    if (!user_id) {
+      return res.status(400).json({ message: "⚠️ User ID is required." });
+    }
 
-    // ✅ Convert IDs to numbers or null if missing/invalid
-    product_variant_id = !isNaN(Number(product_variant_id)) ? Number(product_variant_id) : null;
-    logo_variant_id = !isNaN(Number(logo_variant_id)) ? Number(logo_variant_id) : null;
-    placement_id = !isNaN(Number(placement_id)) ? Number(placement_id) : null;
+    // ✅ Convert numeric IDs to numbers or null if missing/invalid
+    product_variant_id = !isNaN(Number(product_variant_id)) ? Number(product_variant_id) : null;
+    logo_variant_id = !isNaN(Number(logo_variant_id)) ? Number(logo_variant_id) : null;
+    
+    // 💡 FIX: placement_id is a VARCHAR in DB, so treat it as a string
+    placement_id = placement_id ? String(placement_id).trim() : null; 
 
-    // ✅ Optional: log incoming data for debugging
-    console.log("🧾 Incoming customization:", {
-      user_id,
-      product_variant_id,
-      logo_variant_id,
-      placement_id,
-    });
+    // ✅ Optional: log incoming data for debugging
+    console.log("🧾 Incoming customization:", {
+      user_id,
+      product_variant_id,
+      logo_variant_id,
+      placement_id, // Will now be a string like 'FRNT'
+    });
 
-    // ✅ Handle preview image upload
-    let previewUrl = null;
-    if (req.file && req.file.buffer) {
-      previewUrl = await uploadToCloudinary(req.file.buffer, "customizations/previews");
-    }
+    // ✅ Handle preview image upload
+    let previewUrl = null;
+    if (req.file && req.file.buffer) {
+      previewUrl = await uploadToCloudinary(req.file.buffer, "customizations/previews");
+    }
 
-    const id = nanoid(10);
+    const id = nanoid(10);
 
-    await conn.query(
-      `
-      INSERT INTO customizations 
-      (id, user_id, product_variant_id, logo_variant_id, placement_id, preview_image_url)
-      VALUES (?, ?, ?, ?, ?, ?)
-      `,
-      [id, user_id, product_variant_id, logo_variant_id, placement_id, previewUrl]
-    );
+    await conn.query(
+      `
+      INSERT INTO customizations 
+      (id, user_id, product_variant_id, logo_variant_id, placement_id, preview_image_url)
+      VALUES (?, ?, ?, ?, ?, ?)
+      `,
+      [id, user_id, product_variant_id, logo_variant_id, placement_id, previewUrl]
+    );
 
-    return res.status(201).json({
-      message: "✅ Customization created successfully.",
-      customization: {
-        id,
-        user_id,
-        product_variant_id,
-        logo_variant_id,
-        placement_id,
-        preview_image_url: previewUrl,
-      },
-    });
-  } catch (error) {
-    console.error("❌ Error in /customizations/new:", error);
-    return res.status(500).json({
-      message: "Server error while creating customization.",
-      error: error.sqlMessage || error.message,
-    });
-  } finally {
-    if (conn) conn.release();
-  }
+    return res.status(201).json({
+      message: "✅ Customization created successfully.",
+      customization: {
+        id,
+        user_id,
+        product_variant_id,
+        logo_variant_id,
+        placement_id,
+        preview_image_url: previewUrl,
+      },
+    });
+  } catch (error) {
+    console.error("❌ Error in /customizations/new:", error);
+    return res.status(500).json({
+      message: "Server error while creating customization.",
+      error: error.sqlMessage || error.message,
+    });
+  } finally {
+    if (conn) conn.release();
+  }
 });
-
 
 // =====================
 // GET /all-customizations - Role-based Listing
