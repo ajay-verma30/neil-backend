@@ -210,6 +210,7 @@ const params = [
 //get all products
 route.get("/all-products", Authtoken, async (req, res) => {
   const conn = await promisePool.getConnection();
+
   try {
     const { title, sku, isActive } = req.query;
     const requester = req.user;
@@ -219,44 +220,54 @@ route.get("/all-products", Authtoken, async (req, res) => {
 
     // 🧩 Organization logic
     if (!requester) {
-      where.push("org_id IS NULL");
+      where.push("p.org_id IS NULL");
     } else if (requester.role !== "Super Admin") {
       if (requester.org_id) {
-        where.push("(org_id IS NULL OR org_id = ?)");
+        where.push("(p.org_id IS NULL OR p.org_id = ?)");
         params.push(requester.org_id);
       } else {
-        where.push("org_id IS NULL");
+        where.push("p.org_id IS NULL");
       }
     }
 
-    // 🧠 Search filters
+    // 🔍 Search filters
     if (title) {
-      where.push("title LIKE ?");
+      where.push("p.title LIKE ?");
       params.push(`%${title}%`);
     }
     if (sku) {
-      where.push("sku LIKE ?");
+      where.push("p.sku LIKE ?");
       params.push(`%${sku}%`);
     }
     if (typeof isActive !== "undefined") {
-      where.push("isActive = ?");
+      where.push("p.isActive = ?");
       params.push(isActive === "true" || isActive === "1" ? 1 : 0);
     }
 
     const whereSql = where.length ? "WHERE " + where.join(" AND ") : "";
 
-    // 🧾 Fetch products
+    // 🧾 Fetch products with joined category & sub-category
     const [products] = await conn.query(
-      `SELECT * FROM products ${whereSql} ORDER BY created_at DESC`,
+      `
+      SELECT 
+        p.*, 
+        c.title AS category_title,
+        sc.title AS sub_category_title
+      FROM products p
+      LEFT JOIN categories c ON p.category_id = c.id
+      LEFT JOIN sub_categories sc ON p.sub_category_id = sc.id
+      ${whereSql}
+      ORDER BY p.created_at DESC
+      `,
       params
     );
 
-    // Return empty array if no products found
-    if (!products.length) return res.status(200).json({ products: [] });
+    if (!products.length)
+      return res.status(200).json({ products: [] });
 
     const productIds = products.map((p) => p.id);
 
-    // 🧩 Fetch variants for all products
+    // 🧩 Fetch variants
     const productPlaceholders = productIds.map(() => "?").join(",");
     const [variants] = await conn.query(
       `SELECT id, product_id, color, sku
@@ -279,7 +290,7 @@ route.get("/all-products", Authtoken, async (req, res) => {
       );
     }
 
-    // 📏 Fetch variant size attributes
+    // 📏 Fetch size attributes
     let sizeAttributes = [];
     if (variantIds.length) {
       const variantPlaceholders = variantIds.map(() => "?").join(",");
@@ -291,16 +302,18 @@ route.get("/all-products", Authtoken, async (req, res) => {
       );
     }
 
-    // 🧠 Combine variants with images and attributes
+    // 🧠 Combine variant data
     const variantsWithAttributes = variants.map((v) => ({
       ...v,
       images: variantImages.filter((img) => img.variant_id === v.id),
       attributes: sizeAttributes.filter((attr) => attr.variant_id === v.id),
     }));
 
-    // 🧱 Combine products with their variants
+    // 🧱 Combine products + category + variants
     const result = products.map((p) => ({
       ...p,
+      category: p.category_title || "Uncategorized",
+      sub_category: p.sub_category_title || null,
       variants: variantsWithAttributes.filter((v) => v.product_id === p.id),
     }));
 
