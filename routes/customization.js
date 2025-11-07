@@ -55,69 +55,79 @@ const uploadToCloudinary = (buffer, folder) =>
 // POST /new - Create Customization
 // =====================
 route.post("/new", Authtoken, upload.single("preview"), async (req, res) => {
-  let conn;
-  try {
-    conn = await pool.getConnection();
+    let conn;
+    try {
+        conn = await pool.getConnection();
 
-    let { user_id, product_variant_id, logo_variant_id, placement_id } = req.body;
+        let { user_id, product_variant_id, logo_variant_id, placement_id } = req.body;
 
-    // ✅ Only user_id is strictly required
-    if (!user_id) {
-      return res.status(400).json({ message: "⚠️ User ID is required." });
-    }
+        // 1. Basic Validation
+        if (!user_id) {
+            return res.status(400).json({ message: "⚠️ User ID is required." });
+        }
 
-    // ✅ Convert numeric IDs to numbers or null if missing/invalid
-    product_variant_id = !isNaN(Number(product_variant_id)) ? Number(product_variant_id) : null;
-    logo_variant_id = !isNaN(Number(logo_variant_id)) ? Number(logo_variant_id) : null;
-    
-    // 💡 FIX: placement_id is a VARCHAR in DB, so treat it as a string
-    placement_id = placement_id ? String(placement_id).trim() : null; 
+        // 2. Data Cleaning and Type Conversion
+        // Use the parsed number, or null if it's not a valid number (e.g., "", "abc").
+        const getNumericId = (value) => {
+            const num = Number(value);
+            return isNaN(num) || num === 0 ? null : num;
+        };
 
-    // ✅ Optional: log incoming data for debugging
-    console.log("🧾 Incoming customization:", {
-      user_id,
-      product_variant_id,
-      logo_variant_id,
-      placement_id, // Will now be a string like 'FRNT'
-    });
+        // product_variant_id and logo_variant_id are INTs that can be NULL.
+        product_variant_id = getNumericId(product_variant_id);
+        logo_variant_id = getNumericId(logo_variant_id);
+        
+        // placement_id is VARCHAR, can be null.
+        placement_id = placement_id ? String(placement_id).trim() : null; 
 
-    // ✅ Handle preview image upload
-    let previewUrl = null;
-    if (req.file && req.file.buffer) {
-      previewUrl = await uploadToCloudinary(req.file.buffer, "customizations/previews");
-    }
+        // 3. Handle preview image upload
+        let previewUrl = null;
+        if (req.file && req.file.buffer) {
+            // NOTE: Ensure uploadToCloudinary is defined and works correctly
+            previewUrl = await uploadToCloudinary(req.file.buffer, "customizations/previews");
+        }
 
-    const id = nanoid(10);
+        const id = nanoid(10);
 
-    await conn.query(
-      `
-      INSERT INTO customizations 
-      (id, user_id, product_variant_id, logo_variant_id, placement_id, preview_image_url)
-      VALUES (?, ?, ?, ?, ?, ?)
-      `,
-      [id, user_id, product_variant_id, logo_variant_id, placement_id, previewUrl]
-    );
+        // 4. Robust SQL Insertion (Trimmed for safety, resolving ER_PARSE_ERROR)
+        const sql = `
+            INSERT INTO customizations 
+            (id, user_id, product_variant_id, logo_variant_id, placement_id, preview_image_url)
+            VALUES (?, ?, ?, ?, ?, ?)
+        `.trim(); // <-- Crucial FIX to eliminate leading/trailing invisible characters
 
-    return res.status(201).json({
-      message: "✅ Customization created successfully.",
-      customization: {
-        id,
-        user_id,
-        product_variant_id,
-        logo_variant_id,
-        placement_id,
-        preview_image_url: previewUrl,
-      },
-    });
-  } catch (error) {
-    console.error("❌ Error in /customizations/new:", error);
-    return res.status(500).json({
-      message: "Server error while creating customization.",
-      error: error.sqlMessage || error.message,
-    });
-  } finally {
-    if (conn) conn.release();
-  }
+        const values = [
+            id, 
+            user_id, 
+            product_variant_id, 
+            logo_variant_id, 
+            placement_id, 
+            previewUrl
+        ];
+        
+        await conn.query(sql, values);
+
+        return res.status(201).json({
+            message: "✅ Customization created successfully.",
+            customization: {
+                id,
+                user_id,
+                product_variant_id,
+                logo_variant_id,
+                placement_id,
+                preview_image_url: previewUrl,
+            },
+        });
+    } catch (error) {
+        console.error("❌ Error in /customizations/new:", error);
+        // Provide both internal error message and SQL message if available
+        return res.status(500).json({
+            message: "Server error while creating customization.",
+            error: error.sqlMessage || error.message,
+        });
+    } finally {
+        if (conn) conn.release();
+    }
 });
 
 // =====================
