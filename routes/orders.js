@@ -457,11 +457,127 @@ router.get("/order-summary", authenticateToken, async (req, res) => {
 
 
 
+// router.get("/:id", authenticateToken, async (req, res) => {
+//   try {
+//     const { id } = req.params;
+//     const [rows] = await promiseConn.query(
+//       `
+//       SELECT 
+//         o.id,
+//         o.order_batch_id,
+//         o.status,
+//         o.total_amount,
+//         o.payment_status,
+//         o.payment_method,
+//         o.cart_id,
+//         o.customizations_id,
+//         o.created_at,
+//         o.updated_at,
+
+//         -- Shipping address
+//         CONCAT_WS(', ',
+//           sa.address_line1,
+//           sa.address_line2,
+//           sa.city,
+//           sa.state,
+//           sa.postal_code,
+//           sa.country
+//         ) AS shipping_address,
+
+//         -- Billing address
+//         CONCAT_WS(', ',
+//           ba.address_line1,
+//           ba.address_line2,
+//           ba.city,
+//           ba.state,
+//           ba.postal_code,
+//           ba.country
+//         ) AS billing_address,
+
+//         -- User details
+//         u.f_name,
+//         u.l_name,
+//         u.email
+//       FROM orders o
+//       JOIN addresses sa ON o.shipping_address_id = sa.id
+//       JOIN addresses ba ON o.billing_address_id = ba.id
+//       JOIN users u ON o.user_id = u.id
+//       WHERE o.id = ?
+//       `,
+//       [id]
+//     );
+
+//     if (rows.length === 0) {
+//       return res.status(404).json({ success: false, message: "Order not found" });
+//     }
+
+//     const order = rows[0];
+// const customization_details = [];
+// const cart = order.cart_id;
+
+// for (let i = 0; i < cart.length; i++) {
+//   const [rows] = await promiseConn.query(
+//     `SELECT 
+//       ct.title,
+//       ct.image,
+//       ct.sizes,
+//       ct.quantity,
+//       c.preview_image_url,
+//       lp.name AS placement_name,
+//       lp.view AS placement_view,
+//       lv.color AS logo_color,
+//       pv.color AS product_color,
+//       pv.sku AS product_sku
+//     FROM cart_items ct
+//     JOIN customizations c ON ct.customizations_id = c.id
+//     JOIN logo_placements lp ON c.placement_id = lp.id
+//     JOIN logo_variants lv ON c.logo_variant_id = lv.id
+//     JOIN product_variants pv ON c.product_variant_id = pv.id
+//     WHERE ct.id = ?`,
+//     [cart[i]]
+//   );
+
+//   if (rows.length > 0) {
+//     customization_details.push(rows[0]);
+//   }
+// }
+//     return res.status(200).json({
+//       success: true,
+//       data: {
+//         id: order.id,
+//         order_batch_id: order.order_batch_id,
+//         status: order.status,
+//         total_amount: order.total_amount,
+//         payment_status: order.payment_status,
+//         payment_method: order.payment_method,
+//         cart_ids: order.cart_id,
+//         customizationDetails: customization_details,
+//         shipping_address: order.shipping_address,
+//         billing_address: order.billing_address,
+//         created_at: order.created_at,
+//         updated_at: order.updated_at,
+//         customer: {
+//           f_name: order.f_name,
+//           l_name: order.l_name,
+//           email: order.email
+//         }
+//       }
+//     });
+//   } catch (err) {
+//     console.error("Error fetching order:", err);
+//     res.status(500).json({
+//       success: false,
+//       message: "Internal server error"
+//     });
+//   }
+// });
+
+
 router.get("/:id", authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Fetch order + related details
+    // Fetch order + related details (only one query)
     const [rows] = await promiseConn.query(
       `
       SELECT 
@@ -473,6 +589,7 @@ router.get("/:id", authenticateToken, async (req, res) => {
         o.payment_method,
         o.cart_id,
         o.customizations_id,
+        o.preview_url,   -- ✅ Added single representative preview URL
         o.created_at,
         o.updated_at,
 
@@ -509,40 +626,38 @@ router.get("/:id", authenticateToken, async (req, res) => {
       [id]
     );
 
+
     if (rows.length === 0) {
       return res.status(404).json({ success: false, message: "Order not found" });
     }
 
     const order = rows[0];
-const customization_details = [];
-const cart = order.cart_id;
 
-for (let i = 0; i < cart.length; i++) {
-  const [rows] = await promiseConn.query(
-    `SELECT 
-      ct.title,
-      ct.image,
-      ct.sizes,
-      ct.quantity,
-      c.preview_image_url,
-      lp.name AS placement_name,
-      lp.view AS placement_view,
-      lv.color AS logo_color,
-      pv.color AS product_color,
-      pv.sku AS product_sku
-    FROM cart_items ct
-    JOIN customizations c ON ct.customizations_id = c.id
-    JOIN logo_placements lp ON c.placement_id = lp.id
-    JOIN logo_variants lv ON c.logo_variant_id = lv.id
-    JOIN product_variants pv ON c.product_variant_id = pv.id
-    WHERE ct.id = ?`,
-    [cart[i]]
-  );
+    const parseJsonArray = (jsonString) => {
+      if (typeof jsonString === 'string') {
+        try {
+          return JSON.parse(jsonString);
+        } catch (e) {
+          console.warn("Could not parse JSON string:", e);
+        }
+      }
+      return jsonString || [];
+    };
 
-  if (rows.length > 0) {
-    customization_details.push(rows[0]);
-  }
-}
+    const cartIds = order.cart_id;
+    let cartItems = [];
+    for (i=0; i<cartIds.length;i++){
+      const [res] = await promiseConn.query("SELECT * FROM cart_items where id=?",[cartIds[i]]);
+      cartItems.push(res)
+    }
+    
+
+    const customizationIds = order.customizations_id; 
+    let customizations = [];
+    for (i=0; i<customizationIds.length;i++){
+      const [custres] = await promiseConn.query("SELECT * FROM customizations where id=?",[customizationIds[i]]);
+      customizations.push(custres)
+    }
     return res.status(200).json({
       success: true,
       data: {
@@ -552,8 +667,14 @@ for (let i = 0; i < cart.length; i++) {
         total_amount: order.total_amount,
         payment_status: order.payment_status,
         payment_method: order.payment_method,
-        cart_ids: order.cart_id,
-        customizationDetails: customization_details,
+        // Convert JSON strings to arrays for the client
+        cart_ids: parseJsonArray(order.cart_id),
+        customizations_ids: parseJsonArray(order.customizations_id),
+        cartItems: cartItems,
+        customizations: customizations,
+        // Representative preview image (from the first item)
+        preview_url: order.preview_url, 
+        
         shipping_address: order.shipping_address,
         billing_address: order.billing_address,
         created_at: order.created_at,
@@ -566,7 +687,7 @@ for (let i = 0; i < cart.length; i++) {
       }
     });
   } catch (err) {
-    console.error("Error fetching order:", err);
+    console.error("Error fetching simple order details:", err);
     res.status(500).json({
       success: false,
       message: "Internal server error"
