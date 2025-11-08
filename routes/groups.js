@@ -94,9 +94,47 @@ route.get(
     try {
       conn = await pool.getConnection();
       const user = req.user;
+      
+      // ✅ 1. Extract Filter Parameters from Query
+      const { search, org_id, start_date, end_date } = req.query;
 
-      const whereClause = !isSuperAdmin(req) ? "WHERE ug.org_id = ?" : "";
-      const params = !isSuperAdmin(req) ? [user.org_id] : [];
+      const whereConditions = [];
+      const params = [];
+
+      // ✅ 2. Base Organization Filter (Mandatory for non-Super Admin)
+      if (!isSuperAdmin(req)) {
+        whereConditions.push("ug.org_id = ?");
+        params.push(user.org_id);
+      } else if (org_id) {
+        // Filter by specific Organization ID if provided by Super Admin
+        whereConditions.push("ug.org_id = ?");
+        params.push(org_id);
+      }
+
+      // ✅ 3. Search Filter (Group Title)
+      if (search) {
+        whereConditions.push("ug.title LIKE ?");
+        params.push(`%${search}%`);
+      }
+
+      // ✅ 4. Created At Date Filters
+      if (start_date) {
+        // Filter for groups created ON or AFTER start_date
+        whereConditions.push("ug.created_at >= ?");
+        params.push(start_date); 
+      }
+
+      if (end_date) {
+        // Filter for groups created ON or BEFORE end_date. 
+        // We append ' 23:59:59' to include the full day.
+        whereConditions.push("ug.created_at <= ?");
+        params.push(`${end_date} 23:59:59`);
+      }
+
+      // ✅ 5. Build Final WHERE Clause
+      const whereClause = whereConditions.length > 0
+        ? `WHERE ${whereConditions.join(" AND ")}`
+        : "";
 
       const [groups] = await conn.query(
         `
@@ -110,7 +148,7 @@ route.get(
         ${whereClause}
         ORDER BY ug.title ASC;
         `,
-        params
+        params // Pass the dynamic parameter array
       );
 
       return res.status(200).json({ groups });
@@ -125,7 +163,6 @@ route.get(
     }
   }
 );
-
 /* -----------------------------------
    🗑️ DELETE GROUP (Super Admin: any, Admin: own org)
 ----------------------------------- */
