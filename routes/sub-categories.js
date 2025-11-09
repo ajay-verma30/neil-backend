@@ -105,20 +105,38 @@ route.post("/new", Authtoken, async (req, res) => {
 route.get("/all", Authtoken, async (req, res) => {
   const conn = await promiseConn.getConnection();
   try {
-    const { title, category_id } = req.query; // filters
+    const { title, category_id, org_id, start_date, end_date } = req.query;
     const conditions = [];
     const params = [];
 
-    // Filter by sub-category title
+    // 🔹 Filter by sub-category title
     if (title) {
       conditions.push("sc.title LIKE ?");
       params.push(`%${title}%`);
     }
 
-    // Filter by category
+    // 🔹 Filter by parent category
     if (category_id) {
       conditions.push("sc.category_id = ?");
       params.push(category_id);
+    }
+
+    // 🔹 Filter by organization
+    if (org_id) {
+      conditions.push("sc.org_id = ?");
+      params.push(org_id);
+    }
+
+    // 🔹 Filter by date range
+    if (start_date && end_date) {
+      conditions.push("DATE(sc.created_at) BETWEEN ? AND ?");
+      params.push(start_date, end_date);
+    } else if (start_date) {
+      conditions.push("DATE(sc.created_at) >= ?");
+      params.push(start_date);
+    } else if (end_date) {
+      conditions.push("DATE(sc.created_at) <= ?");
+      params.push(end_date);
     }
 
     const whereClause = conditions.length ? "WHERE " + conditions.join(" AND ") : "";
@@ -143,15 +161,13 @@ route.get("/all", Authtoken, async (req, res) => {
     const [rows] = await conn.query(query, params);
 
     if (!rows.length) {
-      return res.status(404).json({ message: "No sub-categories found." });
+      return res.status(404).json({ success: false, message: "No sub-categories found." });
     }
 
-    res.status(200).json({ subCategories: rows });
+    res.status(200).json({ success: true, subCategories: rows });
   } catch (err) {
     console.error("❌ Error in GET /sub-categories/all:", err);
-    res
-      .status(500)
-      .json({ message: "Internal Server Error", error: err.message });
+    res.status(500).json({ success: false, message: "Internal Server Error", error: err.message });
   } finally {
     if (conn) conn.release();
   }
