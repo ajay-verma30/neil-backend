@@ -75,22 +75,22 @@ route.post("/new", async (req, res) => {
 });
 
 // ✅ Fetch all organizations (Super Admin only)
-route.get("/all-organizations", Authtoken, authorizeRoles("Super Admin"), async (req, res) => {
-  try {
-    const [rows] = await promisePool.query("SELECT * FROM organizations");
-    if (!rows.length) {
-      return res
-        .status(404)
-        .json({ success: false, message: "No organizations found." });
+  route.get("/all-organizations", Authtoken, authorizeRoles("Super Admin"), async (req, res) => {
+    try {
+      const [rows] = await promisePool.query("SELECT * FROM organizations");
+      if (!rows.length) {
+        return res
+          .status(404)
+          .json({ success: false, message: "No organizations found." });
+      }
+      res.status(200).json({ success: true, organizations: rows });
+    } catch (e) {
+      console.error("❌ Error fetching organizations:", e);
+      res
+        .status(500)
+        .json({ success: false, message: "Internal Server Error", error: e.message });
     }
-    res.status(200).json({ success: true, organizations: rows });
-  } catch (e) {
-    console.error("❌ Error fetching organizations:", e);
-    res
-      .status(500)
-      .json({ success: false, message: "Internal Server Error", error: e.message });
-  }
-});
+  });
 
 // ✅ List organization titles (Super Admin only)
 route.get("/organizations-list", Authtoken, authorizeRoles("Super Admin"), async (req, res) => {

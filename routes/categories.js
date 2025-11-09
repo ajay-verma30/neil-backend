@@ -60,43 +60,85 @@ route.post('/new', Authtoken, authorizeRoles("Super Admin", "Admin", "Manager"),
 
 //all -categories
 // Get all categories
-route.get('/all', Authtoken, authorizeRoles("Super Admin", "Admin", "Manager"), async (req, res) => {
+route.get(
+  "/all",
+  Authtoken,
+  authorizeRoles("Super Admin", "Admin", "Manager"),
+  async (req, res) => {
     const conn = await promisePool.getConnection();
     try {
-        const { org_id } = req.query; 
+      const { org_id, title, start_date, end_date } = req.query;
 
-        let query = `
-            SELECT 
-                c.id, 
-                c.title, 
-                c.created_by, 
-                c.created_at, 
-                o.title AS organization 
-            FROM categories c
-            LEFT JOIN organizations o ON c.org_id = o.id
-        `;
-        const params = [];
+      // Base query
+      let query = `
+        SELECT 
+          c.id, 
+          c.title, 
+          c.created_by, 
+          c.created_at, 
+          o.title AS organization
+        FROM categories c
+        LEFT JOIN organizations o ON c.org_id = o.id
+      `;
 
-        if (org_id) {
-            query += " WHERE c.org_id = ?";
-            params.push(org_id);
-        }
+      // Collect WHERE conditions dynamically
+      const conditions = [];
+      const params = [];
 
-        const [rows] = await conn.query(query, params);
+      // 🔹 Organization filter
+      if (org_id) {
+        conditions.push("c.org_id = ?");
+        params.push(org_id);
+      }
 
-        if (!rows.length) {
-            return res.status(404).json({ success: false, message: "No categories found." });
-        }
+      // 🔹 Title (search) filter
+      if (title) {
+        conditions.push("c.title LIKE ?");
+        params.push(`%${title}%`);
+      }
 
-        return res.status(200).json({ success: true, categories: rows });
+      // 🔹 Date range filter
+      if (start_date && end_date) {
+        conditions.push("DATE(c.created_at) BETWEEN ? AND ?");
+        params.push(start_date, end_date);
+      } else if (start_date) {
+        conditions.push("DATE(c.created_at) >= ?");
+        params.push(start_date);
+      } else if (end_date) {
+        conditions.push("DATE(c.created_at) <= ?");
+        params.push(end_date);
+      }
 
+      // Append WHERE if any filters exist
+      if (conditions.length > 0) {
+        query += " WHERE " + conditions.join(" AND ");
+      }
+
+      // 🔹 Sort by latest created first
+      query += " ORDER BY c.created_at DESC";
+
+      const [rows] = await conn.query(query, params);
+
+      if (!rows.length) {
+        return res
+          .status(404)
+          .json({ success: false, message: "No categories found." });
+      }
+
+      return res.status(200).json({ success: true, categories: rows });
     } catch (e) {
-        console.error("❌ Error fetching categories:", e);
-        return res.status(500).json({ success: false, message: "Internal Server Error", error: e.message });
+      console.error("❌ Error fetching categories:", e);
+      return res.status(500).json({
+        success: false,
+        message: "Internal Server Error",
+        error: e.message,
+      });
     } finally {
-        if (conn) conn.release();
+      if (conn) conn.release();
     }
-});
+  }
+);
+
 
 
 //delete 
