@@ -49,6 +49,7 @@ app.use('/customization', require('./routes/customization.js'))
 app.use('/checkout', require('./routes/orders.js'))
 app.use('/address', require('./routes/address.js'))
 app.use('/cart', require('./routes/cart.js'))
+app.use('/sidebar', require('./routes/sidebar.js'))
 app.use("/auth", authRoutes);
 
 
