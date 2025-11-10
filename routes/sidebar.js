@@ -67,4 +67,41 @@ route.post('/categories', Authtoken, async (req, res) => {
 });
 
 
+route.post("/sidebar/products", Authtoken, async (req, res) => {
+  const conn = await promiseConn.getConnection();
+  try {
+    const { orgId, categoryId, subCategoryId } = req.body;
+
+    let query = `
+      SELECT 
+        p.id, p.title, p.price, p.image_url, 
+        c.title AS category_title, 
+        sc.title AS subcategory_title
+      FROM products p
+      LEFT JOIN categories c ON p.category_id = c.id
+      LEFT JOIN sub_categories sc ON p.sub_category_id = sc.id
+      WHERE p.org_id = ? 
+    `;
+    const params = [orgId];
+
+    if (subCategoryId) {
+      query += " AND p.sub_category_id = ?";
+      params.push(subCategoryId);
+    } else if (categoryId) {
+      query += " AND p.category_id = ?";
+      params.push(categoryId);
+    }
+
+    const [rows] = await conn.query(query, params);
+    res.json({ success: true, products: rows });
+  } catch (err) {
+    console.error("❌ Error fetching products:", err);
+    res.status(500).json({ success: false, message: "Internal Server Error" });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+
+
 module.exports = route;
