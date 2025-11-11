@@ -930,6 +930,55 @@ route.get(
   }
 );
 
+//update my details
+route.patch("/my-user", Authtoken, async (req, res) => {
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    const userId = req.user.id; 
+    const { f_name, l_name, email, contact } = req.body;
+    const updateFields = {};
+    if (f_name) updateFields.f_name = f_name;
+    if (l_name) updateFields.l_name = l_name;
+    if (email) updateFields.email = email;
+    if (contact) updateFields.contact = contact;
+
+    const keys = Object.keys(updateFields);
+
+    if (keys.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "No valid fields provided for update (f_name, l_name, email, or contact).",
+      });
+    }
+    const setClauses = keys.map(key => `${key} = ?`).join(", ");
+    const params = keys.map(key => updateFields[key]);
+    params.push(userId);
+    const updateQuery = `UPDATE users SET ${setClauses} WHERE id = ?`;
+    const [result] = await conn.query(updateQuery, params);
+    if (result.affectedRows === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "No user found with this ID or no changes were made.",
+      });
+    }
+    res.status(200).json({
+      success: true,
+      message: "User details updated successfully.",
+      updatedFields: updateFields,
+    });
+  } catch (error) {
+    console.error("❌ Error updating user:", error);
+    res.status(500).json({
+      success: false,
+      message: "Internal Server Error",
+      error: error.message,
+    });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
 
 //Update user status
 route.patch(
@@ -985,7 +1034,6 @@ route.patch(
     }
   }
 );
-
 
 
 /* -----------------------------------
@@ -1091,56 +1139,6 @@ route.patch(
     }
   }
 );
-
-//update my details
-route.patch("/my-user", Authtoken, async (req, res) => {
-  let conn;
-  try {
-    conn = await pool.getConnection();
-    const userId = req.user.id; 
-    const { f_name, l_name, email, contact } = req.body;
-    const updateFields = {};
-    if (f_name) updateFields.f_name = f_name;
-    if (l_name) updateFields.l_name = l_name;
-    if (email) updateFields.email = email;
-    if (contact) updateFields.contact = contact;
-
-    const keys = Object.keys(updateFields);
-
-    if (keys.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: "No valid fields provided for update (f_name, l_name, email, or contact).",
-      });
-    }
-    const setClauses = keys.map(key => `${key} = ?`).join(", ");
-    const params = keys.map(key => updateFields[key]);
-    params.push(userId);
-    const updateQuery = `UPDATE users SET ${setClauses} WHERE id = ?`;
-    const [result] = await conn.query(updateQuery, params);
-    if (result.affectedRows === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "No user found with this ID or no changes were made.",
-      });
-    }
-    res.status(200).json({
-      success: true,
-      message: "User details updated successfully.",
-      updatedFields: updateFields,
-    });
-  } catch (error) {
-    console.error("❌ Error updating user:", error);
-    res.status(500).json({
-      success: false,
-      message: "Internal Server Error",
-      error: error.message,
-    });
-  } finally {
-    if (conn) conn.release();
-  }
-});
-
 
 
 //update password 
