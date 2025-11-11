@@ -109,6 +109,55 @@ route.get("/organizations-list", Authtoken, authorizeRoles("Super Admin"), async
 });
 
 // ✅ Get specific organization by ID
+route.get("/:id", Authtoken, authorizeRoles("Super Admin", "Admin", "Manager"), async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!id)
+      return res
+        .status(400)
+        .json({ success: false, message: "Organization ID is required." });
+
+    // Restrict Admin/Manager to their own org
+    if (req.user.role !== "Super Admin" && req.user.org_id !== id) {
+      return res
+        .status(403)
+        .json({ success: false, message: "Access denied for this organization." });
+    }
+
+    const [orgResult] = await promisePool.query(
+      "SELECT * FROM organizations WHERE id = ?",
+      [id]
+    );
+    if (!orgResult.length) {
+      return res
+        .status(404)
+        .json({ success: false, message: "No organization found with this ID." });
+    }
+
+    const organization = orgResult[0];
+    let adminDetails = null;
+
+    if (organization.default_admin) {
+      const [adminResult] = await promisePool.query(
+        "SELECT id, f_name, l_name, email, contact, role, created_at FROM users WHERE id = ?",
+        [organization.default_admin]
+      );
+      if (adminResult.length > 0) adminDetails = adminResult[0];
+    }
+
+    res.status(200).json({
+      success: true,
+      organization: { ...organization, admin: adminDetails },
+    });
+  } catch (e) {
+    console.error("❌ Error fetching organization:", e);
+    res
+      .status(500)
+      .json({ success: false, message: "Internal Server Error", error: e.message });
+  }
+});
+
+// ✅ Update organization status (active/inactive)
 route.patch("/:id/status", Authtoken, authorizeRoles("Super Admin"), async (req, res) => {
   try {
     const { id } = req.params;
@@ -138,43 +187,6 @@ route.patch("/:id/status", Authtoken, authorizeRoles("Super Admin"), async (req,
   }
 });
 
-
-// ✅ Update organization status (active/inactive)
-route.patch("/:id/status", Authtoken, authorizeRoles("Super Admin"), async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { status } = req.body;
-
-    if (typeof status !== "boolean") {
-      return res
-        .status(400)
-        .json({ success: false, message: "Status must be true or false." });
-    }
-
-    const [result] = await promisePool.query(
-      "UPDATE organizations SET status = ? WHERE id = ?",
-      [status, id]
-    );
-
-    if (result.affectedRows === 0) {
-      return res
-        .status(404)
-        .json({ success: false, message: "No organization found with this ID." });
-    }
-
-    res.status(200).json({
-      success: true,
-      message: `Organization ${
-        status ? "activated" : "deactivated"
-      } successfully.`,
-    });
-  } catch (e) {
-    console.error("❌ Error updating organization status:", e);
-    res
-      .status(500)
-      .json({ success: false, message: "Internal Server Error", error: e.message });
-  }
-});
 
 // ✅ Delete organization (Super Admin only)
 route.delete("/:id", Authtoken, authorizeRoles("Super Admin"), async (req, res) => {
