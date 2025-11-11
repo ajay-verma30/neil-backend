@@ -1092,8 +1092,6 @@ route.patch(
   }
 );
 
-
-/* Update my details */
 //update my details
 route.patch("/my-user", Authtoken, async (req, res) => {
   let conn;
