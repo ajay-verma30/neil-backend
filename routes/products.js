@@ -785,10 +785,14 @@ route.patch(
         for (const file of variantFiles) {
           const type = file.fieldname.split("-")[2] || "front";
           const url = await uploadToCloudinary(file.buffer, "variants");
-          await conn.query(
-            "INSERT INTO variant_images (variant_id, url, type) VALUES (?, ?, ?)",
-            [variantId, url, type]
-          );
+          const validTypes = ["front","back","left","right"];
+const typeToInsert = validTypes.includes(type) ? type : "front";
+
+await conn.query(
+  "INSERT INTO variant_images (variant_id, url, type) VALUES (?, ?, ?)",
+  [variantId, url, typeToInsert]
+);
+
         }
       }
 
