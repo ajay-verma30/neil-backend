@@ -433,8 +433,8 @@ route.get("/:id", Authtoken, async (req, res) => {
          s.id AS subcategory_id, 
          s.title AS subcategory_name
        FROM products p
-       LEFT JOIN categories c ON p.category = c.id
-       LEFT JOIN sub_categories s ON p.sub_cat = s.id
+       LEFT JOIN categories c ON p.category_id = c.id
+       LEFT JOIN sub_categories s ON p.sub_category_id = s.id
        WHERE p.id = ?`,
       [id]
     );
