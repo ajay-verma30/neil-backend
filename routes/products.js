@@ -424,29 +424,50 @@ route.get("/:id", Authtoken, async (req, res) => {
   try {
     const { id } = req.params;
 
-    // 1️⃣ Fetch main product
+    // 1️⃣ Fetch main product with category + subcategory names
     const [productRows] = await conn.query(
-      "SELECT * FROM products WHERE id = ?",
+      `SELECT 
+         p.*, 
+         c.id AS category_id, 
+         c.title AS category_name,
+         s.id AS subcategory_id, 
+         s.title AS subcategory_name
+       FROM products p
+       LEFT JOIN categories c ON p.category = c.id
+       LEFT JOIN sub_categories s ON p.sub_cat = s.id
+       WHERE p.id = ?`,
       [id]
     );
+
     if (!productRows.length) {
       return res.status(404).json({ message: "Product not found" });
     }
+
     const product = productRows[0];
 
-    // 2️⃣ Fetch product images
+    // 2️⃣ Fetch all categories
+    const [allCategories] = await conn.query(
+      "SELECT id, title FROM categories ORDER BY title ASC"
+    );
+
+    // 3️⃣ Fetch all subcategories (with category_id)
+    const [allSubCategories] = await conn.query(
+      "SELECT id, title, category_id FROM sub_categories ORDER BY title ASC"
+    );
+
+    // 4️⃣ Fetch product images
     const [productImages] = await conn.query(
       "SELECT id, product_id, url FROM product_images WHERE product_id = ?",
       [id]
     );
 
-    // 3️⃣ Fetch product variants
+    // 5️⃣ Fetch product variants
     const [variants] = await conn.query(
       "SELECT id, product_id, color, sku FROM product_variants WHERE product_id = ?",
       [id]
     );
 
-    // 4️⃣ If no variants, return product with empty variants
+    // 6️⃣ Handle empty variants
     if (!variants.length) {
       const [groupVis] = await conn.query(
         "SELECT group_id, is_visible FROM group_product_visibility WHERE product_id = ?",
@@ -456,16 +477,26 @@ route.get("/:id", Authtoken, async (req, res) => {
       return res.status(200).json({
         product: {
           ...product,
+          category: {
+            id: product.category_id,
+            title: product.category_name,
+          },
+          sub_category: {
+            id: product.subcategory_id,
+            title: product.subcategory_name,
+          },
           images: productImages,
           variants: [],
           group_visibility: groupVis,
         },
+        categories: allCategories,
+        sub_categories: allSubCategories,
       });
     }
 
     const variantIds = variants.map((v) => v.id);
 
-    // 5️⃣ Fetch variant images
+    // 7️⃣ Fetch variant images
     let variantImages = [];
     if (variantIds.length) {
       const placeholders = variantIds.map(() => "?").join(",");
@@ -477,7 +508,7 @@ route.get("/:id", Authtoken, async (req, res) => {
       );
     }
 
-    // 6️⃣ Fetch variant size attributes
+    // 8️⃣ Fetch size attributes
     let sizeAttributes = [];
     if (variantIds.length) {
       const placeholders = variantIds.map(() => "?").join(",");
@@ -489,7 +520,7 @@ route.get("/:id", Authtoken, async (req, res) => {
       );
     }
 
-    // 7️⃣ Merge variants with images and attributes
+    // 9️⃣ Merge variants
     const variantsWithDetails = variants.map((v) => {
       const imgs = variantImages.filter((i) => i.variant_id === v.id);
       const attrs = sizeAttributes
@@ -501,27 +532,33 @@ route.get("/:id", Authtoken, async (req, res) => {
           final_price: (Number(product.price) + Number(a.adjustment || 0)).toFixed(2),
         }));
 
-      return {
-        ...v,
-        images: imgs,
-        attributes: attrs,
-      };
+      return { ...v, images: imgs, attributes: attrs };
     });
 
-    // 8️⃣ Fetch group visibility
+    // 🔟 Fetch group visibility
     const [groupVis] = await conn.query(
       "SELECT group_id, is_visible FROM group_product_visibility WHERE product_id = ?",
       [id]
     );
 
-    // 9️⃣ Return full product details
+    // ✅ Final Response
     res.status(200).json({
       product: {
         ...product,
+        category: {
+          id: product.category_id,
+          title: product.category_name,
+        },
+        sub_category: {
+          id: product.subcategory_id,
+          title: product.subcategory_name,
+        },
         images: productImages,
         variants: variantsWithDetails,
         group_visibility: groupVis,
       },
+      categories: allCategories,
+      sub_categories: allSubCategories,
     });
   } catch (e) {
     console.error("❌ Error fetching specific product:", e);
