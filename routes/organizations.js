@@ -169,7 +169,7 @@ route.patch("/:id/status", Authtoken, authorizeRoles("Super Admin"), async (req,
 
     const [result] = await promisePool.query(
       "UPDATE organizations SET status = ? WHERE id = ?",
-      [status ? 1 : 0, id] // store as INT
+      [status ? 1 : 0, id] 
     );
 
     if (result.affectedRows === 0) {
@@ -179,7 +179,7 @@ route.patch("/:id/status", Authtoken, authorizeRoles("Super Admin"), async (req,
     res.status(200).json({
       success: true,
       message: `Organization ${status ? "activated" : "deactivated"} successfully.`,
-      status: status ? 1 : 0, // return numeric status
+      status: status ? 1 : 0, 
     });
   } catch (e) {
     console.error("❌ Error updating organization status:", e);
