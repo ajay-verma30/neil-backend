@@ -1094,45 +1094,45 @@ route.patch(
 
 
 /* Update my details */
-route.patch("/my-user", Authtoken, async (req, res) => {
-  let conn;
-  try {
-    conn = await pool.getConnection();
+// route.patch("/my-user", Authtoken, async (req, res) => {
+//   let conn;
+//   try {
+//     conn = await pool.getConnection();
 
-    const { email, contact, id } = req.body;
+//     const { email, contact, id } = req.body;
 
-    if (!email || !contact || !id) {
-      return res.status(400).json({
-        success: false,
-        message: "Please provide email, contact, and user ID to update.",
-      });
-    }
+//     if (!email || !contact || !id) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Please provide email, contact, and user ID to update.",
+//       });
+//     }
 
-    const updateQuery = "UPDATE users SET email = ?, contact = ? WHERE id = ?";
-    const [result] = await conn.query(updateQuery, [email, contact, id]);
+//     const updateQuery = "UPDATE users SET email = ?, contact = ? WHERE id = ?";
+//     const [result] = await conn.query(updateQuery, [email, contact, id]);
 
-    if (result.affectedRows === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "No user found with this ID.",
-      });
-    }
+//     if (result.affectedRows === 0) {
+//       return res.status(404).json({
+//         success: false,
+//         message: "No user found with this ID.",
+//       });
+//     }
 
-    res.status(200).json({
-      success: true,
-      message: "User updated successfully.",
-    });
-  } catch (error) {
-    console.error("❌ Error updating user:", error);
-    res.status(500).json({
-      success: false,
-      message: "Internal Server Error",
-      error: error.message,
-    });
-  } finally {
-    if (conn) conn.release();
-  }
-});
+//     res.status(200).json({
+//       success: true,
+//       message: "User updated successfully.",
+//     });
+//   } catch (error) {
+//     console.error("❌ Error updating user:", error);
+//     res.status(500).json({
+//       success: false,
+//       message: "Internal Server Error",
+//       error: error.message,
+//     });
+//   } finally {
+//     if (conn) conn.release();
+//   }
+// });
 
 
 
