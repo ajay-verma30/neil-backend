@@ -37,19 +37,6 @@ const upload = multer({
   },
 }).any();
 
-// ✅ Helper: Upload buffer to Cloudinary
-// const uploadToCloudinary = (buffer, folder) =>
-//   new Promise((resolve, reject) => {
-//     const stream = cloudinary.uploader.upload_stream(
-//       { folder },
-//       (error, result) => {
-//         if (error) reject(error);
-//         else resolve(result.secure_url);
-//       }
-//     );
-//     streamifier.createReadStream(buffer).pipe(stream);
-//   });
-
 /* -------------------------------------------------------------------------- */
 /* ✅ CREATE PRODUCT (Cloudinary-based) */
 /* -------------------------------------------------------------------------- */
@@ -336,6 +323,51 @@ route.get("/all-products", Authtoken, async (req, res) => {
     if (conn) conn.release();
   }
 });
+
+//get categories and SUb categories
+route.get("/categories", Authtoken, async (req, res) => {
+  const conn = await promisePool.getConnection();
+  try {
+    const [rows] = await conn.query(`
+      SELECT 
+        c.id AS category_id,
+        c.title AS category_title,
+        c.org_id AS category_org_id,
+        GROUP_CONCAT(sc.title ORDER BY sc.title SEPARATOR ', ') AS sub_categories
+      FROM categories c
+      LEFT JOIN sub_categories sc 
+        ON sc.category_id = c.id
+      GROUP BY c.id, c.title, c.org_id
+      ORDER BY c.title;
+    `);
+
+    // Option 1: Structured JSON response
+    const formatted = rows.map(row => ({
+      id: row.category_id,
+      title: row.category_title,
+      org_id: row.category_org_id,
+      sub_categories: row.sub_categories
+        ? row.sub_categories.split(',').map(s => s.trim())
+        : []
+    }));
+
+    res.status(200).json({
+      success: true,
+      data: formatted
+    });
+
+  } catch (error) {
+    console.error("Error fetching categories:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch categories",
+      error: error.message
+    });
+  } finally {
+    conn.release();
+  }
+});
+
 
 // 📚 Get all categories and subcategories (for sidebar)
 route.get("/categories-subcategories", Authtoken, async (req, res) => {
