@@ -337,28 +337,46 @@ route.get("/all-products", Authtoken, async (req, res) => {
 route.get("/categories", Authtoken, async (req, res) => {
   const conn = await promisePool.getConnection();
   try {
-    const [rows] = await conn.query(`
-      SELECT 
-        c.id AS category_id,
-        c.title AS category_title,
-        c.org_id AS category_org_id,
-        GROUP_CONCAT(sc.title ORDER BY sc.title SEPARATOR ', ') AS sub_categories
-      FROM categories c
-      LEFT JOIN sub_categories sc 
-        ON sc.category_id = c.id
-      GROUP BY c.id, c.title, c.org_id
-      ORDER BY c.title;
-    `);
+    const requester = req.user;
 
-    // Option 1: Structured JSON response
-    const formatted = rows.map(row => ({
-      id: row.category_id,
-      title: row.category_title,
-      org_id: row.category_org_id,
-      sub_categories: row.sub_categories
-        ? row.sub_categories.split(',').map(s => s.trim())
-        : []
+    // Build WHERE clause for organization filtering
+    const where = [];
+    const params = [];
+
+    if (requester && requester.org_id) {
+      where.push("(c.org_id IS NULL OR c.org_id = ?)");
+      params.push(requester.org_id);
+    } else {
+      where.push("c.org_id IS NULL");
+    }
+
+    const whereSql = where.length ? "WHERE " + where.join(" AND ") : "";
+
+    // Fetch categories with proper filtering
+    const [categories] = await conn.query(
+      `SELECT c.id, c.title, c.org_id FROM categories c ${whereSql} ORDER BY c.title`,
+      params
+    );
+
+    // Fetch all subcategories and map them to their categories
+    const [allSubCategories] = await conn.query(
+      `SELECT id, title, category_id FROM sub_categories ORDER BY title`
+    );
+
+    // Group subcategories by category_id
+    const formatted = categories.map(cat => ({
+      id: cat.id,
+      title: cat.title,
+      org_id: cat.org_id,
+      sub_categories: allSubCategories
+        .filter(sub => sub.category_id === cat.id)
+        .map(sub => ({
+          id: sub.id,
+          title: sub.title
+        }))
     }));
+
+    console.log("✅ Categories formatted:", formatted);
 
     res.status(200).json({
       success: true,
@@ -366,7 +384,7 @@ route.get("/categories", Authtoken, async (req, res) => {
     });
 
   } catch (error) {
-    console.error("Error fetching categories:", error);
+    console.error("❌ Error fetching categories:", error);
     res.status(500).json({
       success: false,
       message: "Failed to fetch categories",
@@ -374,49 +392,6 @@ route.get("/categories", Authtoken, async (req, res) => {
     });
   } finally {
     conn.release();
-  }
-});
-
-
-// 📚 Get all categories and subcategories (for sidebar)
-route.get("/categories-subcategories", Authtoken, async (req, res) => {
-  const conn = await promisePool.getConnection();
-  try {
-    const categories = [
-      "Tshirts",
-      "Mugs",
-      "Pens",
-      "Bottles",
-      "Books",
-      "Hoodies",
-    ];
-    const [rows] = await conn.query(`
-      SELECT category, GROUP_CONCAT(title ORDER BY title ASC) AS subcategories
-      FROM sub_categories
-      GROUP BY category
-    `);
-    const categoryMap = {};
-    rows.forEach((r) => {
-      categoryMap[r.category] = r.subcategories
-        ? r.subcategories.split(",")
-        : [];
-    });
-    const result = categories.map((cat) => ({
-      category: cat,
-      subcategories: categoryMap[cat] || [],
-    }));
-    res.status(200).json({
-      message: "✅ Categories fetched successfully.",
-      categories: result,
-    });
-  } catch (err) {
-    console.error("❌ Error fetching categories:", err);
-    res.status(500).json({
-      message: "Server error fetching categories.",
-      error: err.message,
-    });
-  } finally {
-    if (conn) conn.release();
   }
 });
 
