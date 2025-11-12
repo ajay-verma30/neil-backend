@@ -217,6 +217,10 @@ route.delete("/:id", Authtoken, authorizeRoles("Super Admin"), async (req, res) 
     // ✅ 12. Delete user_groups (NEW FIX)
     await conn.query(`DELETE FROM user_groups WHERE org_id = ?`, [id]);
 
+
+    await conn.query(`DELETE FROM categories WHERE org_id = ?`, [id]);
+
+    await conn.query(`DELETE FROM sub_categories WHERE org_id = ?`, [id]);
     // ✅ 13. Finally delete the organization
     const [result] = await conn.query(`DELETE FROM organizations WHERE id = ?`, [id]);
 
