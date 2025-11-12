@@ -265,14 +265,14 @@ route.delete("/:id", Authtoken, authorizeRoles("Super Admin"), async (req, res) 
       message: "Organization and all related data deleted successfully.",
     });
   } catch (e) {
-    if (conn) await conn.rollback();
-    console.error("❌ Error deleting organization:", e);
-    res.status(500).json({
-      success: false,
-      message: "Internal Server Error",
-      error: e.message,
-    });
-  } finally {
+  if (conn) await conn.rollback();
+  console.error("❌ Error deleting organization:", e.sqlMessage || e.message, e.stack);
+  res.status(500).json({
+    success: false,
+    message: "Internal Server Error",
+    error: e.sqlMessage || e.message,
+  });
+} finally {
     if (conn) conn.release();
   }
 });
