@@ -209,7 +209,7 @@ route.get("/all-products", Authtoken, async (req, res) => {
   const conn = await promisePool.getConnection();
 
   try {
-    const { title, sku, isActive } = req.query;
+    const { title, sku, isActive, category_id, sub_category_id } = req.query;
     const requester = req.user;
 
     const where = [];
@@ -241,6 +241,16 @@ route.get("/all-products", Authtoken, async (req, res) => {
       params.push(isActive === "true" || isActive === "1" ? 1 : 0);
     }
 
+    // 🏷️ Category / Subcategory filters
+    if (category_id) {
+      where.push("p.category_id = ?");
+      params.push(category_id);
+    }
+    if (sub_category_id) {
+      where.push("p.sub_category_id = ?");
+      params.push(sub_category_id);
+    }
+
     const whereSql = where.length ? "WHERE " + where.join(" AND ") : "";
 
     // 🧾 Fetch products with joined category & sub-category
@@ -266,9 +276,7 @@ route.get("/all-products", Authtoken, async (req, res) => {
     // 🧩 Fetch variants
     const productPlaceholders = productIds.map(() => "?").join(",");
     const [variants] = await conn.query(
-      `SELECT id, product_id, color, sku
-       FROM product_variants
-       WHERE product_id IN (${productPlaceholders})`,
+      `SELECT id, product_id, color, sku FROM product_variants WHERE product_id IN (${productPlaceholders})`,
       productIds
     );
 
@@ -279,9 +287,7 @@ route.get("/all-products", Authtoken, async (req, res) => {
     if (variantIds.length) {
       const variantPlaceholders = variantIds.map(() => "?").join(",");
       [variantImages] = await conn.query(
-        `SELECT variant_id, url, type
-         FROM variant_images
-         WHERE variant_id IN (${variantPlaceholders})`,
+        `SELECT variant_id, url, type FROM variant_images WHERE variant_id IN (${variantPlaceholders})`,
         variantIds
       );
     }
@@ -316,13 +322,12 @@ route.get("/all-products", Authtoken, async (req, res) => {
     res.status(200).json({ products: result });
   } catch (e) {
     console.error("❌ Error fetching products:", e);
-    res
-      .status(500)
-      .json({ message: "Internal Server Error", error: e.message });
+    res.status(500).json({ message: "Internal Server Error", error: e.message });
   } finally {
     if (conn) conn.release();
   }
 });
+
 
 //get categories and SUb categories
 route.get("/categories", Authtoken, async (req, res) => {
