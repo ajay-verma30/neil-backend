@@ -215,16 +215,14 @@ route.get("/all-products", Authtoken, async (req, res) => {
     const where = [];
     const params = [];
 
-    // 🧩 Organization logic
-    if (!requester) {
+    // 🧩 Organization logic - Fixed
+    // Fetch: products with NO org_id (global) + products matching user's org_id
+    if (requester && requester.org_id) {
+      where.push("(p.org_id IS NULL OR p.org_id = ?)");
+      params.push(requester.org_id);
+    } else {
+      // If no user or no org_id, only show global products
       where.push("p.org_id IS NULL");
-    } else if (requester.role !== "Super Admin") {
-      if (requester.org_id) {
-        where.push("(p.org_id IS NULL OR p.org_id = ?)");
-        params.push(requester.org_id);
-      } else {
-        where.push("p.org_id IS NULL");
-      }
     }
 
     // 🔍 Search filters
@@ -244,11 +242,11 @@ route.get("/all-products", Authtoken, async (req, res) => {
     // 🏷️ Category / Subcategory filters
     if (category_id) {
       where.push("p.category_id = ?");
-      params.push(category_id);
+      params.push(parseInt(category_id)); // Convert to integer
     }
     if (sub_category_id) {
       where.push("p.sub_category_id = ?");
-      params.push(sub_category_id);
+      params.push(parseInt(sub_category_id)); // Convert to integer
     }
 
     const whereSql = where.length ? "WHERE " + where.join(" AND ") : "";
@@ -268,6 +266,13 @@ route.get("/all-products", Authtoken, async (req, res) => {
       `,
       params
     );
+
+    // 🔍 Debug logging
+    console.log("🔍 Requester:", requester);
+    console.log("🔍 Requester org_id:", requester?.org_id);
+    console.log("🔍 WHERE conditions:", where);
+    console.log("🔍 Params:", params);
+    console.log("🔍 Products found:", products.length);
 
     if (!products.length) return res.status(200).json({ products: [] });
 
@@ -327,7 +332,6 @@ route.get("/all-products", Authtoken, async (req, res) => {
     if (conn) conn.release();
   }
 });
-
 
 //get categories and SUb categories
 route.get("/categories", Authtoken, async (req, res) => {
