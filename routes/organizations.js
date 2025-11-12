@@ -201,54 +201,15 @@ route.delete("/:id", Authtoken, authorizeRoles("Super Admin"), async (req, res) 
     conn = await promisePool.getConnection();
     await conn.beginTransaction();
 
-    // ✅ 1. Delete all product_images (depends on products)
-    await conn.query(`
-      DELETE pi FROM product_images pi
-      JOIN products p ON pi.product_id = p.id
-      WHERE p.org_id = ?`, [id]);
-
-    // ✅ 2. Delete products
+    // ✅ 1. Delete products
     await conn.query(`DELETE FROM products WHERE org_id = ?`, [id]);
 
     // ✅ 3. Delete logos
     await conn.query(`DELETE FROM logos WHERE org_id = ?`, [id]);
 
-    // ✅ 4. Delete logo_placements and logo_variants (if exist)
-    await conn.query(`DELETE FROM logo_placements WHERE org_id = ?`, [id]);
-    await conn.query(`DELETE FROM logo_variants WHERE org_id = ?`, [id]);
-
     // ✅ 5. Delete orders (that reference org)
     await conn.query(`DELETE FROM orders WHERE org_id = ?`, [id]);
 
-    // ✅ 6. Delete password_reset_tokens
-    await conn.query(`
-      DELETE prt FROM password_reset_tokens prt
-      JOIN users u ON prt.user_id = u.id
-      WHERE u.org_id = ?`, [id]);
-
-    // ✅ 7. Delete refresh tokens
-    await conn.query(`
-      DELETE urt FROM user_refresh_tokens urt
-      JOIN users u ON urt.user_id = u.id
-      WHERE u.org_id = ?`, [id]);
-
-    // ✅ 8. Delete cart items
-    await conn.query(`
-      DELETE ci FROM cart_items ci
-      JOIN users u ON ci.user_id = u.id
-      WHERE u.org_id = ?`, [id]);
-
-    // ✅ 9. Delete addresses
-    await conn.query(`
-      DELETE a FROM addresses a
-      JOIN users u ON a.user_id = u.id
-      WHERE u.org_id = ?`, [id]);
-
-    // ✅ 10. Delete customizations
-    await conn.query(`
-      DELETE c FROM customizations c
-      JOIN users u ON c.user_id = u.id
-      WHERE u.org_id = ?`, [id]);
 
     // ✅ 11. Delete users
     await conn.query(`DELETE FROM users WHERE org_id = ?`, [id]);
