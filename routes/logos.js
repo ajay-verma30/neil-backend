@@ -87,7 +87,6 @@ route.post(
   authorizeRoles("Super Admin", "Admin", "Manager"),
   upload.array("logos"),
   async (req, res) => {
-    // ❌ REMOVED: let uploadedFiles = [];
     try {
       const { title, colors, placements, org_id } = req.body;
 
@@ -108,7 +107,6 @@ route.post(
         finalOrgId = req.user.org_id;
       }
 
-      // 🛑 FIXED: Using uploadToCloudinary instead of local file paths
       const uploadPromises = req.files.map(file =>
         uploadToCloudinary(file.buffer, "logos")
       );
@@ -128,8 +126,8 @@ route.post(
         "INSERT INTO logos (id, title, org_id, created_at) VALUES (?, ?, ?, ?)",
         [logoId, title, finalOrgId, createdAt]
       );
+      
       for (let i = 0; i < req.files.length; i++) {
-        // 🛑 FIXED: Use the Cloudinary URL
         const fileUrl = cloudinaryUrls[i]; 
         
         const [variantResult] = await promiseConn.execute(
@@ -141,13 +139,22 @@ route.post(
         for (const placementName of placementArray) {
           const nameLower = placementName.toLowerCase();
           let view = null;
-          if (nameLower.includes("front") || nameLower.includes("chest")) view = "front";
-          else if (nameLower.includes("back")) view = "back";
-          else if (nameLower.includes("left")) view = "left";
-          else if (nameLower.includes("right")) view = "right";
+          
+          // 🚀 FIXED PLACEMENT VIEW LOGIC: Supports apparel and non-apparel
+          if (nameLower.includes("front") || nameLower.includes("chest") || nameLower.includes("center") || nameLower.includes("full") || nameLower.includes("barrel") || nameLower.includes("clip")) {
+            view = "front";
+          } else if (nameLower.includes("back")) {
+            view = "back";
+          } else if (nameLower.includes("left")) {
+            view = "left";
+          } else if (nameLower.includes("right")) {
+            view = "right";
+          }
+          // END FIXED LOGIC
 
           let [placementRows] = await promiseConn.execute("SELECT id FROM logo_placements WHERE name = ?", [placementName]);
           let placementId;
+          
           if (placementRows.length === 0) {
             placementId = nanoid(4);
             await promiseConn.execute(
@@ -179,7 +186,6 @@ route.post(
       });
     } catch (error) {
       await promiseConn.query("ROLLBACK").catch(err => console.error("Rollback error:", err));
-      // ❌ REMOVED: Local file cleanup (uploadedFiles.forEach...)
       console.error("POST /new-logo Error:", error.sqlMessage || error.message);
       res.status(500).json({
         message: "Server error during logo creation. Transaction rolled back.",
@@ -256,13 +262,22 @@ route.post(
       for (const placementName of placements) {
         const nameLower = placementName.toLowerCase();
         let view = null;
-        if (nameLower.includes("front")) view = "front";
-        else if (nameLower.includes("back")) view = "back";
-        else if (nameLower.includes("left")) view = "left";
-        else if (nameLower.includes("right")) view = "right";
+
+        // 🚀 FIXED PLACEMENT VIEW LOGIC: Supports apparel and non-apparel
+        if (nameLower.includes("front") || nameLower.includes("chest") || nameLower.includes("center") || nameLower.includes("full") || nameLower.includes("barrel") || nameLower.includes("clip")) {
+          view = "front";
+        } else if (nameLower.includes("back")) {
+          view = "back";
+        } else if (nameLower.includes("left")) {
+          view = "left";
+        } else if (nameLower.includes("right")) {
+          view = "right";
+        }
+        // END FIXED LOGIC
 
         let [placementRows] = await promiseConn.execute("SELECT id FROM logo_placements WHERE name = ?", [placementName]);
         let placementId;
+        
         if (placementRows.length === 0) {
           placementId = nanoid(4);
           await promiseConn.execute(
