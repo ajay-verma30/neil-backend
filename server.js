@@ -60,23 +60,27 @@ app.use('/cart', require('./routes/cart.js'))
 app.use('/sidebar', require('./routes/sidebar.js'))
 app.use("/auth", authRoutes);
 
-app.post('/create-payment-intent', async(req,res)=>{
-  try{
-    const {amount} = req.body;
+app.post('/create-payment-intent', async (req, res) => {
+  try {
+    const { amount } = req.body;
+
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ error: "Invalid amount" });
+    }
+
     const paymentIntent = await stripe.paymentIntents.create({
       amount,
-      currency:'USD',
-      automatic_payment_methods: {enabled:true}
+      currency: 'USD',
+      automatic_payment_methods: { enabled: true },
     });
-    res.send({
-      clientSecret: paymentIntent.client_secret,
-    })
+
+    res.status(200).json({ clientSecret: paymentIntent.client_secret });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
   }
-  catch(err){
-    console.log(err);
-    return res.status(500).json({error:err.message})
-  }
-})
+});
+
 
 
 const port = process.env.PORT || 3000;
