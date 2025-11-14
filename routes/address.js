@@ -12,7 +12,7 @@ route.post("/new-address", authenticateToken, async (req, res) => {
   try {
     conn = await pool.getConnection(); // ✅ Get a connection from pool
     const user_id = req.user.id;
-
+    const country = "USA";
     const {
       type,
       address_line_1,
@@ -20,7 +20,6 @@ route.post("/new-address", authenticateToken, async (req, res) => {
       city,
       state,
       postal_code,
-      country,
       is_default,
     } = req.body;
 
@@ -30,7 +29,6 @@ route.post("/new-address", authenticateToken, async (req, res) => {
       !city ||
       !state ||
       !postal_code ||
-      !country ||
       typeof is_default === "undefined"
     ) {
       return res.status(400).json({ message: "All fields are compulsory" });
@@ -110,7 +108,6 @@ route.put("/edit-address/:id", authenticateToken, async (req, res) => {
     conn = await pool.getConnection();
     const user_id = req.user.id;
     const address_id = req.params.id;
-
     const {
       type,
       address_line_1,

@@ -214,18 +214,18 @@ route.get("/all-products", Authtoken, async (req, res) => {
 
     const where = [];
     const params = [];
+    const isSuperAdmin = requester && requester.role === 'Super Admin'; 
 
-    // 🧩 Organization logic - Fixed
-    // Fetch: products with NO org_id (global) + products matching user's org_id
-    if (requester && requester.org_id) {
+    if (isSuperAdmin) {
+      console.log("Super Admin detected. Fetching all products globally.");
+    } else if (requester && requester.org_id) {
       where.push("(p.org_id IS NULL OR p.org_id = ?)");
       params.push(requester.org_id);
+      console.log(`Filtering products for organization ID: ${requester.org_id}`);
     } else {
-      // If no user or no org_id, only show global products
       where.push("p.org_id IS NULL");
+      console.log("No organization ID found. Filtering for global products only.");
     }
-
-    // 🔍 Search filters
     if (title) {
       where.push("p.title LIKE ?");
       params.push(`%${title}%`);
@@ -238,20 +238,15 @@ route.get("/all-products", Authtoken, async (req, res) => {
       where.push("p.isActive = ?");
       params.push(isActive === "true" || isActive === "1" ? 1 : 0);
     }
-
-    // 🏷️ Category / Subcategory filters
     if (category_id) {
       where.push("p.category_id = ?");
-      params.push(parseInt(category_id)); // Convert to integer
+      params.push(parseInt(category_id)); 
     }
     if (sub_category_id) {
       where.push("p.sub_category_id = ?");
-      params.push(parseInt(sub_category_id)); // Convert to integer
+      params.push(parseInt(sub_category_id));
     }
-
     const whereSql = where.length ? "WHERE " + where.join(" AND ") : "";
-
-    // 🧾 Fetch products with joined category & sub-category
     const [products] = await conn.query(
       `
       SELECT 
@@ -266,28 +261,19 @@ route.get("/all-products", Authtoken, async (req, res) => {
       `,
       params
     );
-
-    // 🔍 Debug logging
-    console.log("🔍 Requester:", requester);
+    console.log("🔍 Requester role:", requester?.role);
     console.log("🔍 Requester org_id:", requester?.org_id);
     console.log("🔍 WHERE conditions:", where);
     console.log("🔍 Params:", params);
     console.log("🔍 Products found:", products.length);
-
     if (!products.length) return res.status(200).json({ products: [] });
-
     const productIds = products.map((p) => p.id);
-
-    // 🧩 Fetch variants
     const productPlaceholders = productIds.map(() => "?").join(",");
     const [variants] = await conn.query(
       `SELECT id, product_id, color, sku FROM product_variants WHERE product_id IN (${productPlaceholders})`,
       productIds
     );
-
     const variantIds = variants.map((v) => v.id);
-
-    // 🖼 Fetch variant images
     let variantImages = [];
     if (variantIds.length) {
       const variantPlaceholders = variantIds.map(() => "?").join(",");
@@ -296,8 +282,6 @@ route.get("/all-products", Authtoken, async (req, res) => {
         variantIds
       );
     }
-
-    // 📏 Fetch size attributes
     let sizeAttributes = [];
     if (variantIds.length) {
       const variantPlaceholders = variantIds.map(() => "?").join(",");
@@ -308,15 +292,11 @@ route.get("/all-products", Authtoken, async (req, res) => {
         variantIds
       );
     }
-
-    // 🧠 Combine variant data
     const variantsWithAttributes = variants.map((v) => ({
       ...v,
       images: variantImages.filter((img) => img.variant_id === v.id),
       attributes: sizeAttributes.filter((attr) => attr.variant_id === v.id),
     }));
-
-    // 🧱 Combine products + category + variants
     const result = products.map((p) => ({
       ...p,
       category: p.category_title || "Uncategorized",
@@ -332,6 +312,8 @@ route.get("/all-products", Authtoken, async (req, res) => {
     if (conn) conn.release();
   }
 });
+
+
 
 //get categories and SUb categories
 route.get("/categories", Authtoken, async (req, res) => {
