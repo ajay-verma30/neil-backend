@@ -13,7 +13,7 @@ app.use(express.json());
 
 const allowedOrigins = [
   "http://localhost:3002",
-  "http://localhost:3001", 
+  "http://localhost:3001",
   "https://my-production-domain.com",
   "https://neil-admin.vercel.app"
 ];
@@ -21,21 +21,22 @@ const allowedOrigins = [
 app.use(
   cors({
     origin: function (origin, callback) {
-      // Allow requests with no origin (like Postman or server-side)
-      if (!origin) return callback(null, true);
-
+      if (!origin) return callback(null, true); // allow no-origin
+        
       if (allowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
-        console.warn("❌ Blocked CORS request from:", origin);
-        callback(new Error("Not allowed by CORS"));
+        return callback(null, true);
       }
+
+      console.warn("❌ Blocked CORS request from:", origin);
+      return callback(new Error("Not allowed by CORS"));
     },
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
+
+app.options("*", cors());
 
 
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
