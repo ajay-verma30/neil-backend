@@ -11,32 +11,33 @@ app.set('trust proxy', 1);
 app.use(cookieParser());
 app.use(express.json());
 
-const allowedOrigins = [
-  "http://localhost:3002",
-  "http://localhost:3001",
-  "https://my-production-domain.com",
-  "https://neil-admin.vercel.app"
-];
-
 app.use(
   cors({
     origin: function (origin, callback) {
-      if (!origin) return callback(null, true); // allow no-origin
-        
-      if (allowedOrigins.includes(origin)) {
-        return callback(null, true);
-      }
+      if (!origin) return callback(null, true);
 
-      console.warn("❌ Blocked CORS request from:", origin);
-      return callback(new Error("Not allowed by CORS"));
+      const allowedOrigins = [
+        "http://localhost:3002",
+        "http://localhost:3001",
+        "https://neil-admin.vercel.app",
+        "https://my-production-domain.com"
+      ];
+
+      if (allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        console.warn("❌ CORS Blocked:", origin);
+        callback(new Error("Not allowed by CORS"));
+      }
     },
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allowedHeaders: ["Content-Type", "Authorization"],
+    preflightContinue: false,
+    optionsSuccessStatus: 200,
   })
 );
 
-app.options("/*", cors());
 
 
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
