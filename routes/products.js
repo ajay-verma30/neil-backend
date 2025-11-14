@@ -217,14 +217,11 @@ route.get("/all-products", Authtoken, async (req, res) => {
     const isSuperAdmin = requester && requester.role === 'Super Admin'; 
 
     if (isSuperAdmin) {
-      console.log("Super Admin detected. Fetching all products globally.");
     } else if (requester && requester.org_id) {
       where.push("(p.org_id IS NULL OR p.org_id = ?)");
       params.push(requester.org_id);
-      console.log(`Filtering products for organization ID: ${requester.org_id}`);
     } else {
       where.push("p.org_id IS NULL");
-      console.log("No organization ID found. Filtering for global products only.");
     }
     if (title) {
       where.push("p.title LIKE ?");
@@ -261,11 +258,6 @@ route.get("/all-products", Authtoken, async (req, res) => {
       `,
       params
     );
-    console.log("🔍 Requester role:", requester?.role);
-    console.log("🔍 Requester org_id:", requester?.org_id);
-    console.log("🔍 WHERE conditions:", where);
-    console.log("🔍 Params:", params);
-    console.log("🔍 Products found:", products.length);
     if (!products.length) return res.status(200).json({ products: [] });
     const productIds = products.map((p) => p.id);
     const productPlaceholders = productIds.map(() => "?").join(",");
@@ -357,9 +349,6 @@ route.get("/categories", Authtoken, async (req, res) => {
           title: sub.title
         }))
     }));
-
-    console.log("✅ Categories formatted:", formatted);
-
     res.status(200).json({
       success: true,
       data: formatted
