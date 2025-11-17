@@ -398,7 +398,6 @@ router.get("/order-status-summary", authenticateToken, async (req, res) => {
   }
 });
 
-
 //summary
 router.get("/order-summary", authenticateToken, async (req, res) => {
   try {
@@ -608,6 +607,24 @@ router.get("/:id", authenticateToken, async (req, res) => {
 });
 
 
+//order-notes
+router.get("/:id/order-notes", authenticateToken, async (req,res)=>{
+  try{
+    const {id} = req.params;
+    const getNotes = "SELECT note, created_at FROM order_notes WHERE id=?";
+    const [res] = await promiseConn.query(getNotes,[id]);
+    if(res.length === 0){
+      return res.status(404).json({message:"No messages yet"});
+    }
+    return res.status(200).json({res});
+  }
+  catch (err) {
+    console.error("❌ Error fetching order notes:", err);
+    res.status(500).json({ success: false, message: "Server error while fetching order notes." });
+  }
+})
+
+
 //update order (status/Notes)
 router.patch("/:id", authenticateToken, async (req, res) => {
   const { id } = req.params;
@@ -641,7 +658,6 @@ router.patch("/:id", authenticateToken, async (req, res) => {
     conn = await promiseConn.getConnection();
     await conn.beginTransaction();
 
-    // 🧠 Fetch order and customer
     const [existingOrder] = await conn.query(
       `SELECT o.id, o.status, o.total_amount, o.payment_method,
               u.f_name, u.l_name, u.email

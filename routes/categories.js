@@ -141,6 +141,67 @@ route.get(
 
 
 
+//Update Category
+route.patch('/update/:id', Authtoken, authorizeRoles("Super Admin", "Admin", "Manager"), async (req, res) => {
+    const conn = await promisePool.getConnection();
+    try {
+        await conn.beginTransaction();
+
+        const categoryId = req.params.id;
+        const { title, org_id } = req.body; // org_id can be null for public
+
+        // Check if category exists
+        const [existingRows] = await conn.query("SELECT * FROM categories WHERE id=?", [categoryId]);
+        if (existingRows.length === 0) {
+            return res.status(404).json({ message: "Category not found" });
+        }
+
+        // Optional: Check for duplicate title within the same organization
+        if (title) {
+            const checkDuplicateQuery = "SELECT id FROM categories WHERE title=? AND org_id=? AND id<>?";
+            const [dupRows] = await conn.query(checkDuplicateQuery, [title, org_id || null, categoryId]);
+            if (dupRows.length > 0) {
+                return res.status(400).json({ message: "Category with this title already exists for this organization" });
+            }
+        }
+
+        // Build update query dynamically
+        const fields = [];
+        const values = [];
+
+        if (title !== undefined) {
+            fields.push("title=?");
+            values.push(title);
+        }
+
+        if (org_id !== undefined) { // if org_id is null, it becomes publicly available
+            fields.push("org_id=?");
+            values.push(org_id || null);
+        }
+
+        if (fields.length === 0) {
+            return res.status(400).json({ message: "No fields provided to update" });
+        }
+
+        values.push(categoryId);
+
+        const updateQuery = `UPDATE categories SET ${fields.join(", ")} WHERE id=?`;
+        const [updateResult] = await conn.query(updateQuery, values);
+
+        await conn.commit();
+        return res.status(200).json({ message: "Category updated successfully", data: updateResult });
+
+    } catch (e) {
+        if (conn) await conn.rollback();
+        console.error("❌ Error updating category:", e);
+        return res.status(500).json({ message: "Internal Server Error", error: e.message });
+    } finally {
+        if (conn) conn.release();
+    }
+});
+
+
+
 //delete 
 // Delete a category
 route.delete('/:id', Authtoken, authorizeRoles("Super Admin", "Admin", "Manager"), async (req, res) => {
