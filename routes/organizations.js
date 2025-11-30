@@ -34,45 +34,94 @@ route.post("/new", async (req, res) => {
 
     if (!title || !f_name || !l_name || !email || !contact || !password) {
       await conn.rollback();
-      return res
-        .status(400)
-        .json({ success: false, message: "Please fill all required fields." });
+      return res.status(400).json({
+        success: false,
+        message: "Please fill all required fields."
+      });
     }
 
+    // Create organization
     await conn.query(
       "INSERT INTO organizations (id, title, created_at) VALUES (?, ?, ?)",
       [orgId, title, createdAt]
     );
 
+    // Create admin user
     const role = "Admin";
     const hashpassword = await bcrypt.hash(password, 12);
 
     await conn.query(
-      "INSERT INTO users (id, f_name, l_name, email, contact, hashpassword, role, org_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      `INSERT INTO users (id, f_name, l_name, email, contact, hashpassword, role, org_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [userID, f_name, l_name, email, contact, hashpassword, role, orgId, createdAt]
     );
 
-    await conn.query("UPDATE organizations SET default_admin = ? WHERE id = ?", [
-      userID,
-      orgId,
-    ]);
+    // Set default admin
+    await conn.query(
+      "UPDATE organizations SET default_admin = ? WHERE id = ?",
+      [userID, orgId]
+    );
+
+    /*
+    -------------------------------------------------------------
+      ADD RESET-PASSWORD EMAIL LOGIC HERE (same as your user route)
+    -------------------------------------------------------------
+    */
+
+    // Create password reset token
+    const resetToken = crypto.randomBytes(32).toString("hex");
+    const tokenHash = crypto.createHash("sha256").update(resetToken).digest("hex");
+
+    // Store token in DB
+    await conn.query(
+      `INSERT INTO password_reset_tokens (user_id, token_hash, expires_at, created_at)
+       VALUES (?, ?, DATE_ADD(NOW(), INTERVAL 1 HOUR), NOW())`,
+      [userID, tokenHash]
+    );
+
+    // Build reset link
+    const resetLink = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}&email=${encodeURIComponent(email)}`;
+
+    const emailHtml = `
+      <h2>Welcome to ServiceNest!</h2>
+      <p>Hi ${f_name},</p>
+      <p>Your organization has been created and you are assigned as the admin.</p>
+      <p>Click the button below to set your password:</p>
+      <a href="${resetLink}"
+        style="background:#007bff;color:#fff;padding:10px 20px;text-decoration:none;border-radius:5px;">
+        Set Password
+      </a>
+      <p>This link expires in 1 hour.</p>
+    `;
+
+    await sendEmail(email, "Set Up Your ServiceNest Admin Account", emailHtml);
+
+    /*
+    -------------------------------------------------------------
+                  END OF RESET LOGIC
+    -------------------------------------------------------------
+    */
 
     await conn.commit();
 
     res.status(201).json({
       success: true,
-      message: "Organization and admin user created successfully.",
+      message: "Organization and admin user created successfully. Email sent."
     });
+
   } catch (e) {
     console.error("❌ Error creating organization:", e);
     if (conn) await conn.rollback();
-    res
-      .status(500)
-      .json({ success: false, message: "Internal Server Error", error: e.message });
+    res.status(500).json({
+      success: false,
+      message: "Internal Server Error",
+      error: e.message
+    });
   } finally {
     if (conn) conn.release();
   }
 });
+
 
 // ✅ Fetch all organizations (Super Admin only)
   route.get("/all-organizations", Authtoken, authorizeRoles("Super Admin"), async (req, res) => {
