@@ -6,6 +6,7 @@ const mysqlconnect = require("../db/conn");
 const Authtoken = require("../Auth/tokenAuthentication");
 const bcrypt = require("bcryptjs");
 const crypto = require("crypto");
+const { sendEmail } = require("./mailer");
 
 // ✅ Shared MySQL pool (one per app)
 const pool = mysqlconnect();
