@@ -40,15 +40,17 @@ const authorizeRoles = (...roles) => (req, res, next) => {
 
 router.post(
   "/new-attribute",
-  Authtoken, 
-  authorizeRoles("Super Admin"), 
-  upload, 
+  Authtoken,
+  authorizeRoles("Super Admin"),
+  upload,
   async (req, res) => {
     const conn = await promisePool.getConnection();
 
     try {
       await conn.beginTransaction();
+
       const { org_id, org_context, text_color, background_color } = req.body;
+
       if (!org_id) {
         return res.status(400).json({ message: "org_id is required." });
       }
@@ -62,7 +64,10 @@ router.post(
       let orgImageUrl = null;
 
       if (logoFile) {
-        logoUrl = await uploadToCloudinary(logoFile.buffer, "organization_logos");
+        logoUrl = await uploadToCloudinary(
+          logoFile.buffer,
+          "organization_logos"
+        );
       }
 
       if (orgImageFile) {
@@ -72,48 +77,39 @@ router.post(
         );
       }
 
+      // ❌ Check if already exists
       const [existing] = await conn.query(
         "SELECT id FROM organization_attributes WHERE org_id = ?",
         [org_id]
       );
-      if (existing.length === 0) {
-        await conn.query(
-          `INSERT INTO organization_attributes 
-            (org_id, logo, org_context, org_image, text_color, background_color, created_at) 
-           VALUES (?, ?, ?, ?, ?, ?, NOW())`,
-          [
-            org_id,
-            logoUrl || null,
-            org_context || null,
-            orgImageUrl || null,
-            text_color || null,
-            background_color || null,
-          ]
-        );
-      } else {
-        await conn.query(
-          `UPDATE organization_attributes SET 
-              logo = COALESCE(?, logo),
-              org_context = COALESCE(?, org_context),
-              org_image = COALESCE(?, org_image),
-              text_color = COALESCE(?, text_color),
-              background_color = COALESCE(?, background_color),
-              updated_at = NOW()
-           WHERE org_id = ?`,
-          [
-            logoUrl,
-            org_context,
-            orgImageUrl,
-            text_color,
-            background_color,
-            org_id,
-          ]
-        );
+
+      if (existing.length > 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Attributes already exist for this organization. Use update route.",
+        });
       }
+
+      // ✅ INSERT ONLY
+      await conn.query(
+        `INSERT INTO organization_attributes 
+          (org_id, logo, org_context, org_image, text_color, background_color, created_at) 
+         VALUES (?, ?, ?, ?, ?, ?, NOW())`,
+        [
+          org_id,
+          logoUrl || null,
+          org_context || null,
+          orgImageUrl || null,
+          text_color || null,
+          background_color || null,
+        ]
+      );
+
       await conn.commit();
+
       res.status(201).json({
         success: true,
-        message: "Organization attributes saved successfully.",
+        message: "Organization attributes created successfully.",
         attributes: {
           org_id,
           logo: logoUrl,
@@ -126,6 +122,7 @@ router.post(
     } catch (err) {
       if (conn) await conn.rollback();
       console.error("❌ Error saving org attributes:", err);
+
       return res.status(500).json({
         success: false,
         message: "Internal Server Error",
@@ -136,6 +133,7 @@ router.post(
     }
   }
 );
+
 
 
 // GET /organization/:org_id/attributes
