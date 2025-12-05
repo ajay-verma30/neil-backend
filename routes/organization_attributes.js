@@ -95,7 +95,7 @@ router.post(
           `UPDATE organization_attributes SET 
               logo = COALESCE(?, logo),
               org_context = COALESCE(?, org_context),
-              org_image = COALESCE(?, landing_image),
+              org_image = COALESCE(?, org_image),
               text_color = COALESCE(?, text_color),
               background_color = COALESCE(?, background_color),
               updated_at = NOW()
