@@ -214,7 +214,7 @@ route.get("/all-products", Authtoken, async (req, res) => {
 
     const where = [];
     const params = [];
-    const isSuperAdmin = requester && requester.role === 'Super Admin'; 
+    const isSuperAdmin = requester && requester.role === "Super Admin";
 
     if (isSuperAdmin) {
     } else if (requester && requester.org_id) {
@@ -237,7 +237,7 @@ route.get("/all-products", Authtoken, async (req, res) => {
     }
     if (category_id) {
       where.push("p.category_id = ?");
-      params.push(parseInt(category_id)); 
+      params.push(parseInt(category_id));
     }
     if (sub_category_id) {
       where.push("p.sub_category_id = ?");
@@ -299,13 +299,13 @@ route.get("/all-products", Authtoken, async (req, res) => {
     res.status(200).json({ products: result });
   } catch (e) {
     console.error("❌ Error fetching products:", e);
-    res.status(500).json({ message: "Internal Server Error", error: e.message });
+    res
+      .status(500)
+      .json({ message: "Internal Server Error", error: e.message });
   } finally {
     if (conn) conn.release();
   }
 });
-
-
 
 //get categories and SUb categories
 route.get("/categories", Authtoken, async (req, res) => {
@@ -338,28 +338,27 @@ route.get("/categories", Authtoken, async (req, res) => {
     );
 
     // Group subcategories by category_id
-    const formatted = categories.map(cat => ({
+    const formatted = categories.map((cat) => ({
       id: cat.id,
       title: cat.title,
       org_id: cat.org_id,
       sub_categories: allSubCategories
-        .filter(sub => sub.category_id === cat.id)
-        .map(sub => ({
+        .filter((sub) => sub.category_id === cat.id)
+        .map((sub) => ({
           id: sub.id,
-          title: sub.title
-        }))
+          title: sub.title,
+        })),
     }));
     res.status(200).json({
       success: true,
-      data: formatted
+      data: formatted,
     });
-
   } catch (error) {
     console.error("❌ Error fetching categories:", error);
     res.status(500).json({
       success: false,
       message: "Failed to fetch categories",
-      error: error.message
+      error: error.message,
     });
   } finally {
     conn.release();
@@ -423,12 +422,10 @@ route.get("/products-summary", Authtoken, async (req, res) => {
     });
   } catch (err) {
     console.error("❌ Error fetching products summary:", err);
-    res
-      .status(500)
-      .json({
-        success: false,
-        message: "Server error while fetching summary.",
-      });
+    res.status(500).json({
+      success: false,
+      message: "Server error while fetching summary.",
+    });
   }
 });
 
@@ -588,9 +585,7 @@ route.get("/:id", Authtoken, async (req, res) => {
   }
 });
 
-/* -------------------------------------------------------------------------- */
-/* ✏️ PATCH UPDATE PRODUCT (Non-Destructive / Upsert Logic) */
-/* -------------------------------------------------------------------------- */
+//update product
 route.patch(
   "/edit/:id",
   Authtoken,
@@ -615,10 +610,9 @@ route.patch(
         org_id: orgIdFromFrontend,
         deleted_images,
         deleted_variants,
-        deleted_variant_images, // 🎯 NEW: Capture deleted variant image URLs
+        deleted_variant_images,
       } = req.body;
 
-      // 1️⃣ Check product exists
       const [productRows] = await conn.query(
         "SELECT * FROM products WHERE id = ?",
         [productId]
@@ -631,8 +625,6 @@ route.patch(
         requester.role === "Super Admin"
           ? orgIdFromFrontend || productRows[0].org_id
           : requester.org_id || productRows[0].org_id;
-
-      // 2️⃣ Update product fields dynamically
       const updateFields = [];
       const params = [];
 
@@ -653,7 +645,6 @@ route.patch(
         );
       }
 
-      // 3️⃣ Delete selected product images
       if (deleted_images) {
         let parsedDeletes = [];
         try {
@@ -675,7 +666,6 @@ route.patch(
         }
       }
 
-      // 4️⃣ Delete selected variant images (🎯 NEW STEP)
       if (deleted_variant_images) {
         let parsedDeletedVariantImages = [];
         try {
@@ -685,27 +675,35 @@ route.patch(
           Array.isArray(parsedDeletedVariantImages) &&
           parsedDeletedVariantImages.length
         ) {
-          // Select images to get their URLs for Cloudinary deletion
-          const [imagesToDelete] = await conn.query(
-            `SELECT url FROM variant_images WHERE url IN (?)`,
-            [parsedDeletedVariantImages]
+          // 1. Get all variant IDs associated with this product
+          const [productVariants] = await conn.query(
+            "SELECT id FROM product_variants WHERE product_id = ?",
+            [productId]
           );
+          const variantIds = productVariants.map((v) => v.id);
 
-          // Delete from Cloudinary
-          for (const img of imagesToDelete) {
-            const publicId = extractPublicId(img.url);
-            if (publicId) await deleteFromCloudinary(publicId, "variants");
+          if (variantIds.length > 0) {
+            // 2. Select images to delete, restricted by variant IDs and URL
+            const [imagesToDelete] = await conn.query(
+              `SELECT url FROM variant_images WHERE variant_id IN (?) AND url IN (?)`,
+              [variantIds, parsedDeletedVariantImages]
+            );
+
+            // 3. Delete from Cloudinary (for confirmed images)
+            for (const img of imagesToDelete) {
+              const publicId = extractPublicId(img.url);
+              if (publicId) await deleteFromCloudinary(publicId, "variants");
+            }
+
+            // 4. Delete from DB, restricted by variant IDs and URL
+            await conn.query(
+              `DELETE FROM variant_images WHERE variant_id IN (?) AND url IN (?)`,
+              [variantIds, parsedDeletedVariantImages]
+            );
           }
-
-          // Delete from database
-          await conn.query(
-            `DELETE FROM variant_images WHERE url IN (?)`,
-            [parsedDeletedVariantImages]
-          );
         }
       }
-      
-      // 5️⃣ Add new product images (Original Step 4)
+
       const productImages = files.filter(
         (f) => f.fieldname === "productImages"
       );
@@ -716,8 +714,6 @@ route.patch(
           [productId, url]
         );
       }
-
-      // 6️⃣ Delete selected variants (Original Step 5)
       if (deleted_variants) {
         let parsedDeletedVariants = [];
         try {
@@ -727,12 +723,6 @@ route.patch(
           Array.isArray(parsedDeletedVariants) &&
           parsedDeletedVariants.length
         ) {
-          // NOTE: Deleting variant_images and attributes first, then the variant itself.
-          // Cloudinary deletion for images associated with these variants is missing here,
-          // but should be handled if a variant is deleted. For simplicity, we assume
-          // the image records are cleaned up in the `variant_images` deletion above
-          // or that cascade delete is set up, but for permanent storage like Cloudinary,
-          // manual deletion is always better.
           await conn.query(
             "DELETE FROM variant_images WHERE variant_id IN (?)",
             [parsedDeletedVariants]
@@ -747,8 +737,6 @@ route.patch(
           );
         }
       }
-
-      // 7️⃣ Upsert variants and sizes (Original Step 6)
       let parsedVariants = [];
       try {
         parsedVariants = JSON.parse(variants || "[]");
@@ -771,8 +759,6 @@ route.patch(
           );
           variantId = inserted.insertId;
         }
-
-        // Upsert sizes
         let parsedSizes = [];
         try {
           parsedSizes = Array.isArray(v.sizes)
@@ -783,7 +769,6 @@ route.patch(
           if (!sizeAttr.name) continue;
           const adjustment = parseFloat(sizeAttr.adjustment) || 0;
           const stock = parseInt(sizeAttr.stock) || 0;
-
           const [existingSize] = await conn.query(
             "SELECT variant_id FROM variant_size_attributes WHERE variant_id = ? AND size = ?",
             [variantId, sizeAttr.name]
