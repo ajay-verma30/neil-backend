@@ -232,7 +232,7 @@ router.patch(
       await conn.query(
         `UPDATE organization_attributes SET
             logo = COALESCE(?, logo),
-            landing_image = COALESCE(?, landing_image),
+            org_image = COALESCE(?, org_image),
             org_context = COALESCE(?, org_context),
             text_color = COALESCE(?, text_color),
             background_color = COALESCE(?, background_color),
