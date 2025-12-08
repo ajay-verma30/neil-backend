@@ -17,29 +17,51 @@ const authorizeRoles = (...allowedRoles) => {
 router.post(
   "/new",
   Authtoken,
-  authorizeRoles('Super Admin','Admin','Manager'),
+  authorizeRoles("Super Admin", "Admin", "Manager"),
   async (req, res) => {
     try {
       const {
         variant_id,
         logo_id,
         logo_variant_id,
-        name,       
-        position_x,
-        position_y,
-        width,
-        height,
-        z_index
+        name,
+        position_x_percent,
+        position_y_percent,
+        width_percent,
+        height_percent,
+        z_index,
       } = req.body;
 
-      const created_by = req.user.id; 
-      if (!variant_id || !logo_variant_id || !logo_id || !name) {
+      const created_by = req.user.id;
+
+      // Validation
+      if (
+        !variant_id ||
+        !logo_variant_id ||
+        !logo_id ||
+        !name ||
+        position_x_percent == null ||
+        position_y_percent == null ||
+        width_percent == null ||
+        height_percent == null
+      ) {
         return res.status(400).json({ error: "Missing required fields" });
       }
 
+      // Default values if percentages are out of range
+      const clamp = (val, min, max) => Math.min(Math.max(val, min), max);
+
+      const xPercent = clamp(Number(position_x_percent), 0, 100);
+      const yPercent = clamp(Number(position_y_percent), 0, 100);
+      const wPercent = clamp(Number(width_percent), 0, 100);
+      const hPercent = clamp(Number(height_percent), 0, 100);
+      const z = z_index ?? 1;
+
       const sql = `
-        INSERT INTO variant_logo_positions 
-        (variant_id, logo_id, logo_variant_id, name, position_x, position_y, width, height, z_index, created_by)
+        INSERT INTO variant_logo_positions
+        (variant_id, logo_id, logo_variant_id, name,
+         position_x_percent, position_y_percent, width_percent, height_percent,
+         z_index, created_by)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `;
 
@@ -48,22 +70,23 @@ router.post(
         logo_id,
         logo_variant_id,
         name,
-        position_x ?? 0,
-        position_y ?? 0,
-        width ?? 100,
-        height ?? 100,
-        z_index ?? 1,
-        created_by
+        xPercent,
+        yPercent,
+        wPercent,
+        hPercent,
+        z,
+        created_by,
       ]);
 
       res.json({ message: "Placement saved successfully" });
-
     } catch (err) {
       console.error(err);
       res.status(500).json({ error: "Internal server error" });
     }
   }
 );
+
+
 
 
 router.delete(
