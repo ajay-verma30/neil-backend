@@ -17,7 +17,6 @@ const authorizeRoles = (...allowedRoles) => {
 router.post(
   "/new",
   Authtoken,
-  authorizeRoles("Super Admin", "Admin", "Manager"),
   async (req, res) => {
     try {
       const {
