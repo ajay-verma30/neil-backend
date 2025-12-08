@@ -436,8 +436,6 @@ route.get("/:id", Authtoken, async (req, res) => {
   const conn = await promisePool.getConnection();
   try {
     const { id } = req.params;
-
-    // 1️⃣ Fetch main product with category + subcategory names
     const [productRows] = await conn.query(
       `SELECT 
          p.*, 
@@ -451,36 +449,24 @@ route.get("/:id", Authtoken, async (req, res) => {
        WHERE p.id = ?`,
       [id]
     );
-
     if (!productRows.length) {
       return res.status(404).json({ message: "Product not found" });
     }
-
     const product = productRows[0];
-
-    // 2️⃣ Fetch all categories
     const [allCategories] = await conn.query(
       "SELECT id, title FROM categories ORDER BY title ASC"
     );
-
-    // 3️⃣ Fetch all subcategories (with category_id)
     const [allSubCategories] = await conn.query(
       "SELECT id, title, category_id FROM sub_categories ORDER BY title ASC"
     );
-
-    // 4️⃣ Fetch product images
     const [productImages] = await conn.query(
       "SELECT id, product_id, url FROM product_images WHERE product_id = ?",
       [id]
     );
-
-    // 5️⃣ Fetch product variants
     const [variants] = await conn.query(
       "SELECT id, product_id, color, sku FROM product_variants WHERE product_id = ?",
       [id]
     );
-
-    // 6️⃣ Handle empty variants
     if (!variants.length) {
       const [groupVis] = await conn.query(
         "SELECT group_id, is_visible FROM group_product_visibility WHERE product_id = ?",
@@ -506,10 +492,7 @@ route.get("/:id", Authtoken, async (req, res) => {
         sub_categories: allSubCategories,
       });
     }
-
     const variantIds = variants.map((v) => v.id);
-
-    // 7️⃣ Fetch variant images
     let variantImages = [];
     if (variantIds.length) {
       const placeholders = variantIds.map(() => "?").join(",");
@@ -520,8 +503,6 @@ route.get("/:id", Authtoken, async (req, res) => {
         variantIds
       );
     }
-
-    // 8️⃣ Fetch size attributes
     let sizeAttributes = [];
     if (variantIds.length) {
       const placeholders = variantIds.map(() => "?").join(",");
@@ -532,8 +513,35 @@ route.get("/:id", Authtoken, async (req, res) => {
         variantIds
       );
     }
+    let variantPositions = [];
+    if (variantIds.length) {
+      const placeholders = variantIds.map(() => "?").join(",");
+      [variantPositions] = await conn.query(
+        `SELECT 
+            vlp.id,
+            vlp.variant_id,
+            vlp.logo_id,
+            vlp.logo_variant_id,
+            vlp.name,
+            vlp.position_x,
+            vlp.position_y,
+            vlp.width,
+            vlp.height,
+            vlp.z_index,
+            vlp.created_at,
 
-    // 9️⃣ Merge variants
+            lv.url AS logo_url,
+            lv.color AS logo_color,
+            l.title AS logo_title
+
+         FROM variant_logo_positions vlp
+         LEFT JOIN logo_variants lv ON vlp.logo_variant_id = lv.id
+         LEFT JOIN logos l ON vlp.logo_id = l.id
+         WHERE vlp.variant_id IN (${placeholders})
+         ORDER BY vlp.id DESC`,
+        variantIds
+      );
+    }
     const variantsWithDetails = variants.map((v) => {
       const imgs = variantImages.filter((i) => i.variant_id === v.id);
       const attrs = sizeAttributes
@@ -546,17 +554,30 @@ route.get("/:id", Authtoken, async (req, res) => {
             Number(product.price) + Number(a.adjustment || 0)
           ).toFixed(2),
         }));
-
-      return { ...v, images: imgs, attributes: attrs };
+      const placements = variantPositions
+        .filter((p) => p.variant_id === v.id)
+        .map((p) => ({
+          id: p.id,
+          name: p.name,
+          position_x: p.position_x,
+          position_y: p.position_y,
+          width: p.width,
+          height: p.height,
+          z_index: p.z_index,
+          logo: {
+            id: p.logo_id,
+            title: p.logo_title,
+            variant_id: p.logo_variant_id,
+            url: p.logo_url,
+            color: p.logo_color,
+          },
+        }));
+      return { ...v, images: imgs, attributes: attrs, placements };
     });
-
-    // 🔟 Fetch group visibility
     const [groupVis] = await conn.query(
       "SELECT group_id, is_visible FROM group_product_visibility WHERE product_id = ?",
       [id]
     );
-
-    // ✅ Final Response
     res.status(200).json({
       product: {
         ...product,
@@ -577,13 +598,12 @@ route.get("/:id", Authtoken, async (req, res) => {
     });
   } catch (e) {
     console.error("❌ Error fetching specific product:", e);
-    res
-      .status(500)
-      .json({ message: "Internal Server Error", error: e.message });
+    res.status(500).json({ message: "Internal Server Error", error: e.message });
   } finally {
     if (conn) conn.release();
   }
 });
+
 
 //update product
 route.patch(
