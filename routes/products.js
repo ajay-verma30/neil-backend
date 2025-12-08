@@ -514,34 +514,35 @@ route.get("/:id", Authtoken, async (req, res) => {
       );
     }
     let variantPositions = [];
-    if (variantIds.length) {
-      const placeholders = variantIds.map(() => "?").join(",");
-      [variantPositions] = await conn.query(
-        `SELECT 
-            vlp.id,
-            vlp.variant_id,
-            vlp.logo_id,
-            vlp.logo_variant_id,
-            vlp.name,
-            vlp.position_x,
-            vlp.position_y,
-            vlp.width,
-            vlp.height,
-            vlp.z_index,
-            vlp.created_at,
+if (variantIds.length) {
+  const placeholders = variantIds.map(() => "?").join(",");
+  [variantPositions] = await conn.query(
+    `SELECT 
+        vlp.id,
+        vlp.variant_id,
+        vlp.logo_id,
+        vlp.logo_variant_id,
+        vlp.name,
+        vlp.position_x_percent AS position_x,
+        vlp.position_y_percent AS position_y,
+        vlp.width_percent AS width,
+        vlp.height_percent AS height,
+        vlp.z_index,
+        vlp.created_at,
 
-            lv.url AS logo_url,
-            lv.color AS logo_color,
-            l.title AS logo_title
+        lv.url AS logo_url,
+        lv.color AS logo_color,
+        l.title AS logo_title
 
-         FROM variant_logo_positions vlp
-         LEFT JOIN logo_variants lv ON vlp.logo_variant_id = lv.id
-         LEFT JOIN logos l ON vlp.logo_id = l.id
-         WHERE vlp.variant_id IN (${placeholders})
-         ORDER BY vlp.id DESC`,
-        variantIds
-      );
-    }
+     FROM variant_logo_positions vlp
+     LEFT JOIN logo_variants lv ON vlp.logo_variant_id = lv.id
+     LEFT JOIN logos l ON vlp.logo_id = l.id
+     WHERE vlp.variant_id IN (${placeholders})
+     ORDER BY vlp.id DESC`,
+    variantIds
+  );
+}
+
     const variantsWithDetails = variants.map((v) => {
       const imgs = variantImages.filter((i) => i.variant_id === v.id);
       const attrs = sizeAttributes
