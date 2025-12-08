@@ -139,8 +139,7 @@ router.post(
 // GET /organization/:org_id/attributes
 router.get(
   "/organization/:org_id/attributes",
-  Authtoken, // ensure authenticated
-  authorizeRoles("Super Admin", "Admin", "Manager"), // restrict access
+  Authtoken, 
   async (req, res) => {
     const conn = await promisePool.getConnection();
 
