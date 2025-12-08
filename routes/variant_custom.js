@@ -22,6 +22,7 @@ router.post(
     try {
       const {
         variant_id,
+        logo_id,
         logo_variant_id,
         name,       
         position_x,
@@ -32,18 +33,19 @@ router.post(
       } = req.body;
 
       const created_by = req.user.id; 
-      if (!variant_id || !logo_variant_id || !name) {
+      if (!variant_id || !logo_variant_id || !logo_id || !name) {
         return res.status(400).json({ error: "Missing required fields" });
       }
 
       const sql = `
         INSERT INTO variant_logo_positions 
-        (variant_id, logo_variant_id, name, position_x, position_y, width, height, z_index, created_by)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (variant_id, logo_id, logo_variant_id, name, position_x, position_y, width, height, z_index, created_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `;
 
       await pool.query(sql, [
         variant_id,
+        logo_id,
         logo_variant_id,
         name,
         position_x ?? 0,
@@ -62,5 +64,6 @@ router.post(
     }
   }
 );
+
 
 module.exports = router;
