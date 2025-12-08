@@ -17,6 +17,7 @@ const authorizeRoles = (...allowedRoles) => {
 router.post(
   "/new",
   Authtoken,
+  authorizeRoles('Super Admin','Admin','Manager'),
   async (req, res) => {
     try {
       const {
@@ -56,6 +57,44 @@ router.post(
       ]);
 
       res.json({ message: "Placement saved successfully" });
+
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  }
+);
+
+
+router.delete(
+  "/:id",
+  Authtoken,
+  authorizeRoles('Super Admin','Admin','Manager'),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+
+      if (!id) {
+        return res.status(400).json({ error: "Missing placement ID" });
+      }
+
+      // Check if placement exists
+      const [rows] = await pool.query(
+        "SELECT id FROM variant_logo_positions WHERE id = ?",
+        [id]
+      );
+
+      if (!rows.length) {
+        return res.status(404).json({ error: "Placement not found" });
+      }
+
+      // Delete placement
+      await pool.query(
+        "DELETE FROM variant_logo_positions WHERE id = ?",
+        [id]
+      );
+
+      res.json({ message: "Placement deleted successfully" });
 
     } catch (err) {
       console.error(err);
