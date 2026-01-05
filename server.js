@@ -63,6 +63,7 @@ app.use('/cart', require('./routes/cart.js'))
 app.use('/sidebar', require('./routes/sidebar.js'))
 app.use('/attributes', require('./routes/organization_attributes.js'))
 app.use('/custom-product', require('./routes/variant_custom.js'))
+app.use("/coupon", require('./routes/coupons.js'));
 app.use("/auth", authRoutes);
 app.use("/api/sanmar", sanmarRoutes);
 

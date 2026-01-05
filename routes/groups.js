@@ -94,44 +94,35 @@ route.get(
     try {
       conn = await pool.getConnection();
       const user = req.user;
-      
-      // ✅ 1. Extract Filter Parameters from Query
+    
       const { search, org_id, start_date, end_date } = req.query;
 
       const whereConditions = [];
       const params = [];
-
-      // ✅ 2. Base Organization Filter (Mandatory for non-Super Admin)
       if (!isSuperAdmin(req)) {
         whereConditions.push("ug.org_id = ?");
         params.push(user.org_id);
       } else if (org_id) {
-        // Filter by specific Organization ID if provided by Super Admin
         whereConditions.push("ug.org_id = ?");
         params.push(org_id);
       }
 
-      // ✅ 3. Search Filter (Group Title)
       if (search) {
         whereConditions.push("ug.title LIKE ?");
         params.push(`%${search}%`);
       }
 
-      // ✅ 4. Created At Date Filters
       if (start_date) {
-        // Filter for groups created ON or AFTER start_date
         whereConditions.push("ug.created_at >= ?");
         params.push(start_date); 
       }
 
       if (end_date) {
-        // Filter for groups created ON or BEFORE end_date. 
-        // We append ' 23:59:59' to include the full day.
+
         whereConditions.push("ug.created_at <= ?");
         params.push(`${end_date} 23:59:59`);
       }
 
-      // ✅ 5. Build Final WHERE Clause
       const whereClause = whereConditions.length > 0
         ? `WHERE ${whereConditions.join(" AND ")}`
         : "";
@@ -148,7 +139,7 @@ route.get(
         ${whereClause}
         ORDER BY ug.title ASC;
         `,
-        params // Pass the dynamic parameter array
+        params 
       );
 
       return res.status(200).json({ groups });
@@ -163,6 +154,56 @@ route.get(
     }
   }
 );
+
+
+// get users for the specific group
+
+route.get('/group-members/:group_id', Authtoken, async (req, res) => {
+    try {
+        const { group_id } = req.params;
+        const { role, org_id } = req.user; 
+        const connection = await pool.getConnection();
+
+        try {
+            const query = `
+SELECT 
+    u.id AS user_id,
+    CONCAT(u.f_name, ' ', u.l_name) AS full_name,
+    u.email,
+    u.role,
+    ug.added_on,
+    g.title AS group_name  -- Yeh add kiya
+FROM user_group ug
+JOIN users u ON ug.user_id = u.id
+JOIN user_groups g ON ug.group_id = g.id
+WHERE ug.group_id = ?
+AND (? = 'Super Admin' OR g.org_id = ?);
+            `;
+
+            const [members] = await connection.query(query, [group_id, role, org_id]);
+            if (members.length === 0) {
+                return res.status(200).json({
+                    success: true,
+                    message: "No members found or access denied for this organization",
+                    members: []
+                });
+            }
+
+            res.status(200).json({
+                success: true,
+                count: members.length,
+                members: members
+            });
+
+        } finally {
+            connection.release();
+        }
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 /* -----------------------------------
    🗑️ DELETE GROUP (Super Admin: any, Admin: own org)
 ----------------------------------- */
@@ -200,6 +241,64 @@ route.delete(
     } catch (e) {
       console.error("❌ Delete group error:", e);
       return res.status(500).json({
+        message: "Internal Server Error",
+        error: e.sqlMessage || e.message,
+      });
+    } finally {
+      if (conn) conn.release();
+    }
+  }
+);
+
+
+
+/* -----------------------------------
+   🗑️ DELETE GROUP (Super Admin: any, Admin: own org)
+----------------------------------- */
+route.delete(
+  "/:id",
+  Authtoken,
+  authorizeRoles("Super Admin", "Admin"),
+  async (req, res) => {
+    let conn;
+    try {
+      conn = await pool.getConnection();
+      const { id } = req.params;
+      const user = req.user;
+      const [group] = await conn.query("SELECT * FROM user_groups WHERE id = ?", [id]);
+      if (!group.length) {
+        return res.status(404).json({ message: "Group not found." });
+      }
+      if (!isSuperAdmin(req) && group[0].org_id !== user.org_id) {
+        return res
+          .status(403)
+          .json({ message: "You cannot delete groups from other organizations." });
+      }
+      await conn.beginTransaction();
+
+      try {
+        await conn.query("DELETE FROM user_group WHERE group_id = ?", [id]);
+        const [result] = await conn.query("DELETE FROM user_groups WHERE id = ?", [id]);
+
+        if (result.affectedRows === 0) {
+          throw new Error("Deletion failed at the final step.");
+        }
+
+        await conn.commit();        
+        return res.status(200).json({ 
+          success: true,
+          message: "Group and its member associations deleted successfully." 
+        });
+
+      } catch (err) {
+        await conn.rollback();
+        throw err;
+      }
+
+    } catch (e) {
+      console.error("❌ Delete group error:", e);
+      return res.status(500).json({
+        success: false,
         message: "Internal Server Error",
         error: e.sqlMessage || e.message,
       });

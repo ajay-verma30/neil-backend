@@ -149,9 +149,9 @@ route.post(
   Authtoken,
   authorizeRoles("Super Admin", "Admin", "Manager"),
   async (req, res) => {
-    let conn; // Define connection outside try block
+    let conn; 
     try {
-      conn = await pool.getConnection(); // Acquire connection
+      conn = await pool.getConnection(); 
       const createdAt = getCurrentMysqlDatetime();
       const { f_name, l_name, email, contact, password, role, org_id } = req.body;
       const requester = req.user;
@@ -176,7 +176,6 @@ route.post(
       }
 
       const userId = nanoid(9);
-      // NOTE: Password provided here is temporary, set the role based on requester's role, and targetOrg validation
       const hash = await bcrypt.hash(password, 10); 
       await conn.query(
         `INSERT INTO users (id, f_name, l_name, email, contact, hashpassword, role, org_id, created_at)
@@ -202,7 +201,6 @@ route.post(
         <a href="${resetLink}" style="background:#007bff;color:#fff;padding:10px 20px;text-decoration:none;border-radius:5px;">Set Password</a>
         <p>This link expires in 1 hour.</p>
       `;
-      // NOTE: sendEmail is an async operation, but we await it before committing the transaction.
       await sendEmail(email, "Your Account Has Been Created", emailHtml); 
 
       await conn.commit();
@@ -231,43 +229,28 @@ route.post("/login", loginLimiter, async (req, res) => {
         .status(400)
         .json({ success: false, message: "Email and password are required." });
     }
-
     conn = await pool.getConnection();
-
-    // 🔍 Fetch user by email
     const [users] = await conn.query("SELECT * FROM users WHERE email = ?", [email]);
-
     if (users.length === 0) {
       return res.status(404).json({ success: false, message: "No user found." });
     }
-
     const user = users[0];
-
-    // 🚫 Check if account is inactive
     if (!user.isActive) {
       return res
         .status(403)
         .json({ success: false, message: "Account inactive. Contact admin." });
     }
-
-    // 🔐 Compare password
     const isMatch = await bcrypt.compare(password, user.hashpassword);
     if (!isMatch) {
       return res
         .status(400)
         .json({ success: false, message: "Invalid credentials." });
     }
-
-    // 🪙 Generate access + refresh tokens
     const { accessToken, refreshToken } = generateTokens(user);
-
-    // 🔒 Hash refresh token for DB storage
     const tokenHash = crypto
       .createHash("sha256")
       .update(refreshToken)
       .digest("hex");
-
-    // 💾 Store or update token in DB
     await conn.query(
       `
         INSERT INTO user_refresh_tokens (user_id, token_hash, expires_at)
