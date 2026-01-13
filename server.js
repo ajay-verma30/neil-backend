@@ -24,7 +24,11 @@ app.use(
         "https://my-production-domain.com"
       ];
 
-      if (allowedOrigins.includes(origin)) {
+      // ✅ Allow all Vercel preview deployments
+      if (
+        allowedOrigins.includes(origin) ||
+        origin.endsWith(".vercel.app")
+      ) {
         callback(null, true);
       } else {
         console.warn("❌ CORS Blocked:", origin);
@@ -34,10 +38,9 @@ app.use(
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allowedHeaders: ["Content-Type", "Authorization"],
-    preflightContinue: false,
-    optionsSuccessStatus: 200,
   })
 );
+
 
 
 
