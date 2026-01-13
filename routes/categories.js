@@ -87,9 +87,9 @@ route.get(
 
       // 🔹 Organization filter
       if (org_id) {
-        conditions.push("c.org_id = ?");
-        params.push(org_id);
-      }
+  conditions.push("(c.org_id = ? OR c.org_id IS NULL OR c.org_id = '')");
+  params.push(org_id);
+}
 
       // 🔹 Title (search) filter
       if (title) {

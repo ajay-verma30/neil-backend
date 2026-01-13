@@ -30,8 +30,12 @@ const upload = multer({
   limits: { fileSize: 5 * 1024 * 1024 }, // Max 5MB
   fileFilter: (req, file, cb) => {
     const allowedTypes = ["image/svg+xml", "image/png", "image/jpeg"];
-    if (allowedTypes.includes(file.mimetype)) cb(null, true);
-    else cb(new Error("Only image files are allowed (SVG, PNG, JPG)!"), false);
+    // ✅ Accept blank type or octet-stream from html2canvas blob
+    if (allowedTypes.includes(file.mimetype) || file.mimetype === "" || file.mimetype === "application/octet-stream") {
+      cb(null, true);
+    } else {
+      cb(new Error("Only image files are allowed (SVG, PNG, JPG)!"), false);
+    }
   },
 });
 
@@ -40,7 +44,6 @@ const upload = multer({
 // =====================
 const uploadToCloudinary = (buffer, folder) =>
   new Promise((resolve, reject) => {
-    // 🛑 FIX 2: Call upload_stream on the correct object: cloudinary.uploader
     const stream = cloudinary.uploader.upload_stream(
       { folder },
       (error, result) => {
@@ -55,79 +58,82 @@ const uploadToCloudinary = (buffer, folder) =>
 // POST /new - Create Customization
 // =====================
 route.post("/new", Authtoken, upload.single("preview"), async (req, res) => {
-    let conn;
-    try {
-        conn = await pool.getConnection();
+  let conn;
+  try {
+    conn = await pool.getConnection();
 
-        let { user_id, product_variant_id, logo_variant_id, placement_id } = req.body;
+    let { user_id, product_variant_id, logo_variant_ids, placement_ids } = req.body;
 
-        // 1. Basic Validation
-        if (!user_id) {
-            return res.status(400).json({ message: "⚠️ User ID is required." });
-        }
-
-        // 2. Data Cleaning and Type Conversion
-        // Use the parsed number, or null if it's not a valid number (e.g., "", "abc").
-        const getNumericId = (value) => {
-            const num = Number(value);
-            return isNaN(num) || num === 0 ? null : num;
-        };
-
-        // product_variant_id and logo_variant_id are INTs that can be NULL.
-        product_variant_id = getNumericId(product_variant_id);
-        logo_variant_id = getNumericId(logo_variant_id);
-        
-        // placement_id is VARCHAR, can be null.
-        placement_id = placement_id ? String(placement_id).trim() : null; 
-
-        // 3. Handle preview image upload
-        let previewUrl = null;
-        if (req.file && req.file.buffer) {
-            // NOTE: Ensure uploadToCloudinary is defined and works correctly
-            previewUrl = await uploadToCloudinary(req.file.buffer, "customizations/previews");
-        }
-
-        const id = nanoid(10);
-
-        // 4. Robust SQL Insertion (Trimmed for safety, resolving ER_PARSE_ERROR)
-        const sql = `
-            INSERT INTO customizations 
-            (id, user_id, product_variant_id, logo_variant_id, placement_id, preview_image_url)
-            VALUES (?, ?, ?, ?, ?, ?)
-        `.trim(); // <-- Crucial FIX to eliminate leading/trailing invisible characters
-
-        const values = [
-            id, 
-            user_id, 
-            product_variant_id, 
-            logo_variant_id, 
-            placement_id, 
-            previewUrl
-        ];
-        
-        await conn.query(sql, values);
-
-        return res.status(201).json({
-            message: "✅ Customization created successfully.",
-            customization: {
-                id,
-                user_id,
-                product_variant_id,
-                logo_variant_id,
-                placement_id,
-                preview_image_url: previewUrl,
-            },
-        });
-    } catch (error) {
-        console.error("❌ Error in /customizations/new:", error);
-        // Provide both internal error message and SQL message if available
-        return res.status(500).json({
-            message: "Server error while creating customization.",
-            error: error.sqlMessage || error.message,
-        });
-    } finally {
-        if (conn) conn.release();
+    if (!user_id) {
+      return res.status(400).json({ message: "⚠️ User ID is required." });
     }
+
+    // =====================
+    // Parse JSON safely
+    // =====================
+    const parseJSON = (input) => {
+      if (!input) return null;
+      try {
+        return typeof input === "string" ? JSON.parse(input) : input;
+      } catch {
+        return null;
+      }
+    };
+
+    product_variant_id = parseJSON(product_variant_id);
+    logo_variant_ids = parseJSON(logo_variant_ids);
+    placement_ids = parseJSON(placement_ids);
+
+    // =====================
+    // Handle preview image
+    // =====================
+    let previewUrl = null;
+    if (req.file && req.file.buffer) {
+      previewUrl = await uploadToCloudinary(req.file.buffer, "customizations/previews");
+    }
+
+    const id = nanoid(10);
+
+    // =====================
+    // Insert into DB
+    // =====================
+    const sql = `
+      INSERT INTO customizations 
+      (id, user_id, product_variant_id, logo_variant_ids, placement_ids, preview_image_url)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `;
+
+    const values = [
+      id,
+      user_id,
+      product_variant_id ? JSON.stringify(product_variant_id) : null,
+      logo_variant_ids ? JSON.stringify(logo_variant_ids) : null,
+      placement_ids ? JSON.stringify(placement_ids) : null,
+      previewUrl
+    ];
+
+    await conn.query(sql, values);
+
+    return res.status(201).json({
+      message: "✅ Customization created successfully.",
+      customization: {
+        id,
+        user_id,
+        product_variant_id,
+        logo_variant_ids,
+        placement_ids,
+        preview_image_url: previewUrl
+      }
+    });
+  } catch (error) {
+    console.error("❌ Error in /customizations/new:", error.message, error.stack);
+    return res.status(500).json({
+      message: "Server error while creating customization.",
+      error: error.sqlMessage || error.message,
+    });
+  } finally {
+    if (conn) conn.release();
+  }
 });
 
 // =====================
@@ -147,8 +153,8 @@ route.get("/all-customizations", Authtoken, async (req, res) => {
         u.org_id,
         og.title AS organization,
         c.product_variant_id,
-        c.logo_variant_id,
-        c.placement_id,
+        c.logo_variant_ids,
+        c.placement_ids,
         c.preview_image_url,
         c.created_at
       FROM customizations c
@@ -174,7 +180,7 @@ route.get("/all-customizations", Authtoken, async (req, res) => {
       customizations,
     });
   } catch (error) {
-    console.error("❌ Error in /all-customizations:", error);
+    console.error("❌ Error in /all-customizations:", error.message, error.stack);
     return res.status(500).json({
       message: "Server error while fetching customizations.",
       error: error.sqlMessage || error.message,
@@ -206,13 +212,8 @@ route.delete("/:id", Authtoken, async (req, res) => {
       try {
         const urlParts = customization.preview_image_url.split("/");
         const folderAndFile = urlParts.slice(-2).join("/"); // e.g. "customizations/previews/abc123.jpg"
-        // The public ID is typically the folder/filename without extension
         const fullPublicId = folderAndFile.split(".")[0];
-        
-        // This line likely needs to be updated to use the helper from cloudinary.js:
-        // await deleteFromCloudinary(fullPublicId); 
-        // OR, if sticking to the current helper which requires the full path:
-        await cloudinary.uploader.destroy(fullPublicId); // This is correct if fullPublicId is the correct path
+        await cloudinary.uploader.destroy(fullPublicId);
       } catch (cloudErr) {
         console.warn("⚠️ Failed to delete Cloudinary preview:", cloudErr.message);
       }
@@ -223,7 +224,7 @@ route.delete("/:id", Authtoken, async (req, res) => {
 
     return res.status(200).json({ message: "✅ Customization deleted successfully." });
   } catch (error) {
-    console.error("❌ Error deleting customization:", error);
+    console.error("❌ Error deleting customization:", error.message, error.stack);
     return res.status(500).json({
       message: "Server error while deleting customization.",
       error: error.sqlMessage || error.message,

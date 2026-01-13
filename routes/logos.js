@@ -78,6 +78,24 @@ const deleteFromCloudinary = async (url) => {
     // You might choose to throw the error or just log it, as the DB transaction has already committed.
   }
 };
+
+
+
+
+const optionalAuth = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (!token) {
+    req.user = null;
+    return next();
+  }
+
+  jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, user) => {
+    req.user = err ? null : user;
+    next();
+  });
+};
 // =====================
 // CREATE Logo
 // =====================
@@ -392,6 +410,8 @@ route.get("/all-logos", Authtoken, async (req, res) => {
     });
   }
 });
+
+
 // =====================
 // GET Logo Summary
 // =====================
@@ -465,6 +485,62 @@ route.get("/logo-summary", Authtoken, async (req, res) => {
   }
 });
 
+// GET logos which have placements for a product
+route.get("/product-variant-logos/:variant_id", optionalAuth, async (req, res) => {
+  try {
+    const { variant_id } = req.params;
+    const user = req.user;
+    let params = [variant_id];
+    
+    // Logic: Humein wahi logos chahiye jinka placement variant_logo_positions mein hai
+    let orgFilter = "AND (l.org_id IS NULL)";
+    if (user && user.org_id) {
+      orgFilter = "AND (l.org_id IS NULL OR l.org_id = ?)";
+      params.push(user.org_id);
+    }
+
+    const [rows] = await promiseConn.query(`
+      SELECT DISTINCT 
+        l.id AS logo_id, l.title, 
+        lv.id AS logo_variant_id, lv.color AS logo_color, lv.url AS logo_url,
+        vlp.name AS placement_name, 
+        lp.view AS placement_view,
+        lp.id AS placement_id,
+        vlp.position_x_percent, vlp.position_y_percent, vlp.width_percent
+      FROM variant_logo_positions vlp
+      JOIN logos l ON vlp.logo_id = l.id
+      JOIN logo_variants lv ON vlp.logo_variant_id = lv.id
+      JOIN logo_placements lp ON vlp.name = lp.name -- Name ya ID se link karein
+      WHERE vlp.variant_id = ? 
+      ${orgFilter}
+    `, params);
+
+    // Grouping for Frontend (Logos -> Variants -> Placements)
+    const logosMap = {};
+    rows.forEach(row => {
+      if (!logosMap[row.logo_id]) {
+        logosMap[row.logo_id] = { id: row.logo_id, title: row.title, variants: {} };
+      }
+      if (!logosMap[row.logo_id].variants[row.logo_variant_id]) {
+        logosMap[row.logo_id].variants[row.logo_variant_id] = {
+          id: row.logo_variant_id, color: row.logo_color, url: row.logo_url, placements: []
+        };
+      }
+      logosMap[row.logo_id].variants[row.logo_variant_id].placements.push({
+        id: row.placement_id,
+        name: row.placement_name,
+        view: row.placement_view,
+        x: row.position_x_percent,
+        y: row.position_y_percent,
+        w: row.width_percent
+      });
+    });
+
+    res.json(Object.values(logosMap).map(l => ({
+      ...l, variants: Object.values(l.variants)
+    })));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
 
 // =====================
 // GET Single Logo

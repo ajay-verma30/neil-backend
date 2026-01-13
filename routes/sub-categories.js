@@ -102,76 +102,77 @@ route.post("/new", Authtoken, async (req, res) => {
 /* -------------------------------------------------------------------------- */
 /* 📋 GET ALL SUB-CATEGORIES */
 /* -------------------------------------------------------------------------- */
-route.get("/all", Authtoken, async (req, res) => {
-  const conn = await promiseConn.getConnection();
-  try {
-    const { title, category_id, org_id, start_date, end_date } = req.query;
-    const conditions = [];
-    const params = [];
+  route.get("/all", Authtoken, async (req, res) => {
+    const conn = await promiseConn.getConnection();
+    try {
+      const { title, category_id, org_id, start_date, end_date } = req.query;
+      const conditions = [];
+      const params = [];
 
-    // 🔹 Filter by sub-category title
-    if (title) {
-      conditions.push("sc.title LIKE ?");
-      params.push(`%${title}%`);
+      // 🔹 Filter by sub-category title
+      if (title) {
+        conditions.push("sc.title LIKE ?");
+        params.push(`%${title}%`);
+      }
+
+      // 🔹 Filter by parent category
+      if (category_id) {
+        conditions.push("sc.category_id = ?");
+        params.push(category_id);
+      }
+
+      // 🔹 Filter by organization
+      // 🔹 Filter by organization (Global + Selected)
+if (org_id) {
+  conditions.push("(sc.org_id = ? OR sc.org_id IS NULL OR sc.org_id = '')");
+  params.push(org_id);
+}
+
+      // 🔹 Filter by date range
+      if (start_date && end_date) {
+        conditions.push("DATE(sc.created_at) BETWEEN ? AND ?");
+        params.push(start_date, end_date);
+      } else if (start_date) {
+        conditions.push("DATE(sc.created_at) >= ?");
+        params.push(start_date);
+      } else if (end_date) {
+        conditions.push("DATE(sc.created_at) <= ?");
+        params.push(end_date);
+      }
+
+      const whereClause = conditions.length ? "WHERE " + conditions.join(" AND ") : "";
+
+      // Join with categories and organizations to get titles
+      const query = `
+        SELECT 
+          sc.id,
+          sc.title,
+          sc.category_id,
+          c.title AS category_title,
+          sc.org_id,
+          o.title AS org_title,
+          sc.created_at
+        FROM sub_categories sc
+        JOIN categories c ON sc.category_id = c.id
+        LEFT JOIN organizations o ON sc.org_id = o.id
+        ${whereClause}
+        ORDER BY sc.created_at DESC
+      `;
+
+      const [rows] = await conn.query(query, params);
+
+      if (!rows.length) {
+        return res.status(404).json({ success: false, message: "No sub-categories found." });
+      }
+
+      res.status(200).json({ success: true, subCategories: rows });
+    } catch (err) {
+      console.error("❌ Error in GET /sub-categories/all:", err);
+      res.status(500).json({ success: false, message: "Internal Server Error", error: err.message });
+    } finally {
+      if (conn) conn.release();
     }
-
-    // 🔹 Filter by parent category
-    if (category_id) {
-      conditions.push("sc.category_id = ?");
-      params.push(category_id);
-    }
-
-    // 🔹 Filter by organization
-    if (org_id) {
-      conditions.push("sc.org_id = ?");
-      params.push(org_id);
-    }
-
-    // 🔹 Filter by date range
-    if (start_date && end_date) {
-      conditions.push("DATE(sc.created_at) BETWEEN ? AND ?");
-      params.push(start_date, end_date);
-    } else if (start_date) {
-      conditions.push("DATE(sc.created_at) >= ?");
-      params.push(start_date);
-    } else if (end_date) {
-      conditions.push("DATE(sc.created_at) <= ?");
-      params.push(end_date);
-    }
-
-    const whereClause = conditions.length ? "WHERE " + conditions.join(" AND ") : "";
-
-    // Join with categories and organizations to get titles
-    const query = `
-      SELECT 
-        sc.id,
-        sc.title,
-        sc.category_id,
-        c.title AS category_title,
-        sc.org_id,
-        o.title AS org_title,
-        sc.created_at
-      FROM sub_categories sc
-      JOIN categories c ON sc.category_id = c.id
-      LEFT JOIN organizations o ON sc.org_id = o.id
-      ${whereClause}
-      ORDER BY sc.created_at DESC
-    `;
-
-    const [rows] = await conn.query(query, params);
-
-    if (!rows.length) {
-      return res.status(404).json({ success: false, message: "No sub-categories found." });
-    }
-
-    res.status(200).json({ success: true, subCategories: rows });
-  } catch (err) {
-    console.error("❌ Error in GET /sub-categories/all:", err);
-    res.status(500).json({ success: false, message: "Internal Server Error", error: err.message });
-  } finally {
-    if (conn) conn.release();
-  }
-});
+  });
 
 /* -------------------------------------------------------------------------- */
 /* 🔍 GET SUB-CATEGORY BY ID */

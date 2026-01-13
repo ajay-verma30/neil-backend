@@ -14,6 +14,7 @@ const authorizeRoles = (...allowedRoles) => {
 };
 
 
+
 router.post(
   "/new",
   Authtoken,
@@ -25,6 +26,7 @@ router.post(
         logo_id,
         logo_variant_id,
         name,
+        type, // <--- Naya field 'type' yahan add kiya
         position_x_percent,
         position_y_percent,
         width_percent,
@@ -34,18 +36,19 @@ router.post(
 
       const created_by = req.user.id;
 
-      // Validation
+      // Validation (ab 'type' bhi mandatory hai)
       if (
         !variant_id ||
         !logo_variant_id ||
         !logo_id ||
         !name ||
+        !type || // <--- Type check add kiya
         position_x_percent == null ||
         position_y_percent == null ||
         width_percent == null ||
         height_percent == null
       ) {
-        return res.status(400).json({ error: "Missing required fields" });
+        return res.status(400).json({ error: "Missing required fields (including type)" });
       }
 
       // Default values if percentages are out of range
@@ -57,12 +60,13 @@ router.post(
       const hPercent = clamp(Number(height_percent), 0, 100);
       const z = z_index ?? 1;
 
+      // SQL Query mein 'type' column aur value add ki gayi hai
       const sql = `
-        INSERT INTO variant_logo_positions
-        (variant_id, logo_id, logo_variant_id, name,
-         position_x_percent, position_y_percent, width_percent, height_percent,
+        INSERT INTO variant_logo_positions 
+        (variant_id, logo_id, logo_variant_id, name, type, 
+         position_x_percent, position_y_percent, width_percent, height_percent, 
          z_index, created_by)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `;
 
       await pool.query(sql, [
@@ -70,6 +74,7 @@ router.post(
         logo_id,
         logo_variant_id,
         name,
+        type, // <--- Value pass ki gayi
         xPercent,
         yPercent,
         wPercent,
@@ -78,14 +83,13 @@ router.post(
         created_by,
       ]);
 
-      res.json({ message: "Placement saved successfully" });
+      res.json({ message: "Placement saved successfully with type: " + type });
     } catch (err) {
-      console.error(err);
+      console.error("❌ Error saving placement:", err);
       res.status(500).json({ error: "Internal server error" });
     }
   }
 );
-
 
 
 

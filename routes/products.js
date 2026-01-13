@@ -4,6 +4,7 @@ const { nanoid } = require("nanoid");
 const mysqlconnect = require("../db/conn");
 const Authtoken = require("../Auth/tokenAuthentication");
 const multer = require("multer");
+const optionalAuth = require("../Auth/optionalAuth");
 const {
   uploadToCloudinary,
   deleteFromCloudinary,
@@ -46,8 +47,9 @@ route.post(
   authorizeRoles("Super Admin", "Admin", "Manager"),
   upload,
   async (req, res) => {
-    const conn = await promisePool.getConnection();
+    let conn;
     try {
+      conn = await promisePool.getConnection();
       await conn.beginTransaction();
 
       const files = req.files || [];
@@ -59,46 +61,67 @@ route.post(
         actual_price,
         variants,
         group_visibility,
-        category_id,
-        sub_category_id,
+        category_id,      // Compulsory
+        sub_category_id,  // Compulsory
         org_id: orgIdFromFrontend,
       } = req.body;
 
       const requester = req.user;
-      const org_id =
-        requester.role === "Super Admin"
-          ? orgIdFromFrontend || null
-          : requester.org_id || orgIdFromFrontend || null;
 
-      if (!title || !description || !sku || !price || !category_id)
-        return res.status(400).json({ message: "Missing required fields" });
+      // 1. 🛡️ STRICT VALIDATION: Saare important fields check karein
+      if (!title || !description || !sku || !price || !category_id || !sub_category_id) {
+        return res.status(400).json({ 
+          success: false, 
+          message: "Title, description, SKU, price, category_id, and sub_category_id are all mandatory." 
+        });
+      }
 
-      // 🧾 Create base product
+      // 2. 🔍 INTEGRITY CHECK: Kya sub-category usi category ka part hai?
+      const [mappingCheck] = await conn.query(
+        "SELECT id FROM sub_categories WHERE id = ? AND category_id = ?",
+        [sub_category_id, category_id]
+      );
+
+      if (mappingCheck.length === 0) {
+        return res.status(400).json({ 
+          success: false, 
+          message: "Invalid mapping: Selected sub-category does not belong to the selected category." 
+        });
+      }
+
+      // 3. 🏢 ORGANIZATION LOGIC
+      let final_org_id = null;
+      if (requester.role === "Super Admin") {
+        final_org_id = orgIdFromFrontend || null;
+      } else {
+        final_org_id = requester.org_id;
+        if (!final_org_id) {
+          return res.status(403).json({ success: false, message: "Admin/Manager must belong to an organization." });
+        }
+      }
+
+      // 4. 🧾 INSERT PRODUCT
       const productId = nanoid(12);
-      const insertProduct = `
-  INSERT INTO products 
-  (id, title, description, sku, category_id, sub_category_id, price, actual_price, org_id, created_at)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
-`;
+      const insertProductQuery = `
+        INSERT INTO products 
+        (id, title, description, sku, category_id, sub_category_id, price, actual_price, org_id, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+      `;
 
-      const params = [
+      await conn.query(insertProductQuery, [
         productId,
         title,
         description,
         sku,
         category_id,
-        sub_category_id || null,
+        sub_category_id,
         price,
-        actual_price,
-        org_id || null,
-      ];
+        actual_price || null,
+        final_org_id
+      ]);
 
-      await conn.query(insertProduct, params);
-
-      // 🖼 Upload product images to Cloudinary (UNCHANGED)
-      const productImages = files.filter(
-        (f) => f.fieldname === "productImages"
-      );
+      // 5. 🖼️ PRODUCT IMAGES (Main Images)
+      const productImages = files.filter((f) => f.fieldname === "productImages");
       for (const file of productImages) {
         const url = await uploadToCloudinary(file.buffer, "products");
         await conn.query(
@@ -107,7 +130,7 @@ route.post(
         );
       }
 
-      // 🎨 Handle variants
+      // 6. 🎨 VARIANTS & SIZES
       let parsedVariants = [];
       try {
         parsedVariants = JSON.parse(variants || "[]");
@@ -119,43 +142,26 @@ route.post(
         const v = parsedVariants[i];
         if (!v.sku) continue;
 
-        // 1. INSERT into product_variants (NO size or size-level price)
+        // Insert Variant
         const [variantRes] = await conn.query(
           "INSERT INTO product_variants (product_id, color, sku) VALUES (?, ?, ?)",
           [productId, v.color || null, v.sku]
         );
         const variantId = variantRes.insertId;
 
-        // 2. INSERT into variant_size_attributes (New logic for size and price adjustment)
-        let parsedSizes = [];
-        try {
-          // v.sizes is expected to be an array of objects:
-          // [{"name": "L", "adjustment": 5.00, "stock": 10}, ...]
-          parsedSizes = Array.isArray(v.sizes)
-            ? v.sizes
-            : JSON.parse(v.sizes || "[]");
-        } catch {}
-
-        if (parsedSizes.length > 0) {
-          for (const sizeAttr of parsedSizes) {
-            if (!sizeAttr.name) continue;
-
-            const adjustment = parseFloat(sizeAttr.adjustment) || 0.0;
-            const stock = parseInt(sizeAttr.stock) || 0;
-
-            await conn.query(
-              `INSERT INTO variant_size_attributes 
-                    (variant_id, size, price_adjustment, stock_quantity) 
-                    VALUES (?, ?, ?, ?)`,
-              [variantId, sizeAttr.name, adjustment, stock]
-            );
-          }
+        // Insert Sizes for this variant
+        let parsedSizes = Array.isArray(v.sizes) ? v.sizes : JSON.parse(v.sizes || "[]");
+        for (const s of parsedSizes) {
+          if (!s.name) continue;
+          await conn.query(
+            `INSERT INTO variant_size_attributes (variant_id, size, price_adjustment, stock_quantity) 
+             VALUES (?, ?, ?, ?)`,
+            [variantId, s.name, parseFloat(s.adjustment) || 0, parseInt(s.stock) || 0]
+          );
         }
 
-        // Upload variant images to Cloudinary (UNCHANGED)
-        const variantFiles = files.filter((f) =>
-          f.fieldname.startsWith(`variant-${i}-`)
-        );
+        // Variant specific images
+        const variantFiles = files.filter((f) => f.fieldname.startsWith(`variant-${i}-`));
         for (const file of variantFiles) {
           const type = file.fieldname.split("-")[2] || "front";
           const url = await uploadToCloudinary(file.buffer, "variants");
@@ -166,38 +172,28 @@ route.post(
         }
       }
 
-      // 👀 Group visibility (UNCHANGED)
+      // 7. 👀 GROUP VISIBILITY
       let parsedGV = [];
       try {
-        parsedGV =
-          typeof group_visibility === "string"
-            ? JSON.parse(group_visibility)
-            : group_visibility;
-      } catch {
-        parsedGV = [];
-      }
+        parsedGV = typeof group_visibility === "string" ? JSON.parse(group_visibility) : group_visibility;
+      } catch { parsedGV = []; }
 
-      if (Array.isArray(parsedGV) && parsedGV.length) {
+      if (Array.isArray(parsedGV)) {
         for (const gv of parsedGV) {
           await conn.query(
-            `INSERT INTO group_product_visibility 
-              (group_id, product_id, is_visible, created_at, updated_at)
-              VALUES (?, ?, ?, NOW(), NOW())`,
+            `INSERT INTO group_product_visibility (group_id, product_id, is_visible) VALUES (?, ?, ?)`,
             [gv.group_id, productId, gv.is_visible ?? true]
           );
         }
       }
 
       await conn.commit();
-      res
-        .status(201)
-        .json({ message: "✅ Product created successfully", productId });
+      res.status(201).json({ success: true, message: "✅ Product created successfully", productId });
+
     } catch (e) {
       if (conn) await conn.rollback();
-      console.error("❌ Error creating product:", e);
-      res
-        .status(500)
-        .json({ message: "Internal Server Error", error: e.message });
+      console.error("❌ CREATE PRODUCT ERROR:", e);
+      res.status(500).json({ success: false, message: "Internal Server Error", error: e.message });
     } finally {
       if (conn) conn.release();
     }
@@ -429,6 +425,145 @@ route.get("/products-summary", Authtoken, async (req, res) => {
   }
 });
 
+
+// PUBLIC PRODUCTS API
+route.get("/public-list", optionalAuth, async (req, res) => {
+  let conn;
+  try {
+    conn = await promisePool.getConnection();
+
+    const { category, sub_category } = req.query;
+
+    const user = req.user;
+    const isSuperAdmin = user?.role === "Super Admin";
+    const orgId = user?.org_id || null;
+
+    /* ================= PRODUCTS ================= */
+
+let productQuery = `
+  SELECT 
+    p.*,
+    c.title AS category_title,
+    sc.title AS sub_category_title,
+    (
+      SELECT url 
+      FROM product_images 
+      WHERE product_id = p.id 
+      LIMIT 1
+    ) AS image_url
+  FROM products p
+  LEFT JOIN categories c ON p.category_id = c.id
+  LEFT JOIN sub_categories sc ON p.sub_category_id = sc.id
+  WHERE p.isActive = TRUE
+`;
+
+const params = [];
+
+/* 🔥 ORG VISIBILITY */
+if (!isSuperAdmin) {
+  if (orgId) {
+    productQuery += `
+      AND (
+        p.org_id IS NULL 
+        OR p.org_id = '' 
+        OR p.org_id = ?
+      )
+    `;
+    params.push(orgId);
+  } else {
+    productQuery += ` AND (p.org_id IS NULL OR p.org_id = '')`;
+  }
+}
+
+/* 🔥 SAFE CATEGORY FILTER */
+if (category) {
+  const arr = category.split(",");
+  productQuery += `
+    AND p.category_id IN (
+      SELECT id FROM categories WHERE title IN (${arr.map(() => "?").join(",")})
+    )
+  `;
+  params.push(...arr);
+}
+
+if (sub_category) {
+  const arr = sub_category.split(",");
+  productQuery += `
+    AND p.sub_category_id IN (
+      SELECT id FROM sub_categories WHERE title IN (${arr.map(() => "?").join(",")})
+    )
+  `;
+  params.push(...arr);
+}
+
+productQuery += ` ORDER BY p.created_at DESC`;
+
+
+    const [products] = await conn.query(productQuery, params);
+
+    /* ================= CATEGORIES ================= */
+
+    let catQuery = `
+      SELECT 
+        c.id, 
+        c.title, 
+        sc.id AS sub_id, 
+        sc.title AS sub_title
+      FROM categories c
+      LEFT JOIN sub_categories sc ON sc.category_id = c.id
+    `;
+
+    const catParams = [];
+
+    if (!isSuperAdmin) {
+      if (orgId) {
+        catQuery += `
+          WHERE (
+            c.org_id IS NULL 
+            OR c.org_id = '' 
+            OR c.org_id = ?
+          )
+        `;
+        catParams.push(orgId);
+      } else {
+        catQuery += ` WHERE (c.org_id IS NULL OR c.org_id = '')`;
+      }
+    }
+
+    const [catData] = await conn.query(catQuery, catParams);
+
+    const categoryMap = {};
+    catData.forEach(r => {
+      if (!categoryMap[r.id]) {
+        categoryMap[r.id] = {
+          id: r.id,
+          title: r.title,
+          subcategories: []
+        };
+      }
+      if (r.sub_id) {
+        categoryMap[r.id].subcategories.push({
+          id: r.sub_id,
+          title: r.sub_title
+        });
+      }
+    });
+
+    res.json({
+      success: true,
+      products,
+      categories: Object.values(categoryMap)
+    });
+
+  } catch (err) {
+    console.error("Public list error:", err);
+    res.status(500).json({ success: false });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+
 /* -------------------------------------------------------------------------- */
 /* ✅ GET SPECIFIC PRODUCT */
 /* -------------------------------------------------------------------------- */
@@ -604,6 +739,133 @@ if (variantIds.length) {
     if (conn) conn.release();
   }
 });
+
+
+/* -------------------------------------------------------------------------- */
+/* ✅ GET SPECIFIC PRODUCT (With Optional Auth & Visibility Logic) */
+/* -------------------------------------------------------------------------- */
+route.get("/public/:id", optionalAuth, async (req, res) => {
+  let conn;
+  try {
+    conn = await promisePool.getConnection();
+    const { id } = req.params;
+    const user = req.user;
+    const isSuperAdmin = user?.role === "Super Admin";
+    const orgId = user?.org_id || null;
+
+    // 1️⃣ Fetch Product (As is)
+    let productQuery = `
+      SELECT 
+        p.*, 
+        c.id AS category_id, c.title AS category_name,
+        s.id AS subcategory_id, s.title AS subcategory_name
+      FROM products p
+      LEFT JOIN categories c ON p.category_id = c.id
+      LEFT JOIN sub_categories s ON p.sub_category_id = s.id
+      WHERE p.id = ? AND p.isActive = TRUE
+    `;
+    const params = [id];
+
+    if (!isSuperAdmin) {
+      if (orgId) {
+        productQuery += ` AND (p.org_id IS NULL OR p.org_id = '' OR p.org_id = ?)`;
+        params.push(orgId);
+      } else {
+        productQuery += ` AND (p.org_id IS NULL OR p.org_id = '')`;
+      }
+    }
+
+    const [productRows] = await conn.query(productQuery, params);
+    if (!productRows.length)
+      return res.status(404).json({ success: false, message: "Product not found or access denied" });
+
+    const product = productRows[0];
+
+    // 2, 3, 4, 5 (Categories, Images, Variants, GroupVis) - Yeh same rahenge
+    const [allCategories] = await conn.query("SELECT id, title FROM categories ORDER BY title ASC");
+    const [allSubCategories] = await conn.query("SELECT id, title, category_id FROM sub_categories ORDER BY title ASC");
+    const [productImages] = await conn.query("SELECT id, product_id, url FROM product_images WHERE product_id = ?", [id]);
+    const [variants] = await conn.query("SELECT id, product_id, color, sku, price FROM product_variants WHERE product_id = ?", [id]);
+    const [groupVis] = await conn.query("SELECT group_id, is_visible FROM group_product_visibility WHERE product_id = ?", [id]);
+
+    // 6️⃣ Fetch variant details: images, size attributes, logo placements (UPDATED)
+    let finalVariants = [];
+
+    if (variants.length > 0) {
+      const variantIds = variants.map(v => v.id);
+      const placeholders = variantIds.map(() => "?").join(",");
+
+      const [variantImages, sizeAttributes, variantLogos] = await Promise.all([
+        conn.query(`SELECT id, variant_id, url, type FROM variant_images WHERE variant_id IN (${placeholders})`, variantIds),
+        conn.query(`SELECT variant_id, size AS name, price_adjustment AS adjustment, stock_quantity AS stock FROM variant_size_attributes WHERE variant_id IN (${placeholders})`, variantIds),
+        conn.query(`
+          SELECT vlp.*, lv.url AS logo_url, lv.color AS logo_color, l.title AS logo_title
+          FROM variant_logo_positions vlp
+          LEFT JOIN logo_variants lv ON vlp.logo_variant_id = lv.id
+          LEFT JOIN logos l ON vlp.logo_id = l.id
+          WHERE vlp.variant_id IN (${placeholders})
+          ORDER BY vlp.id ASC
+        `, variantIds)
+      ]);
+
+      finalVariants = variants.map(v => {
+        const imgs = variantImages[0].filter(i => i.variant_id === v.id);
+        const attrs = sizeAttributes[0]
+          .filter(a => a.variant_id === v.id)
+          .map(a => ({
+            ...a,
+            adjustment: Number(a.adjustment || 0).toFixed(2),
+            stock: Number(a.stock || 0),
+            final_price: (Number(v.price) + Number(a.adjustment || 0)).toFixed(2),
+          }));
+
+        const placements = variantLogos[0]
+          .filter(p => p.variant_id === v.id)
+          .map(p => ({
+            id: p.id,
+            name: p.name,
+            type: p.type,
+            position_x: p.position_x_percent || p.position_x,
+            position_y: p.position_y_percent || p.position_y,
+            width: p.width_percent || p.width,
+            height: p.height_percent || p.height,
+            z_index: p.z_index,
+            logo: {
+              id: p.logo_id,
+              title: p.logo_title,
+              variant_id: p.logo_variant_id,
+              url: p.logo_url,
+              color: p.logo_color,
+            },
+          }));
+
+        return { ...v, images: imgs, attributes: attrs, placements };
+      });
+    }
+
+    // 7️⃣ Respond (Same)
+    res.status(200).json({
+      success: true,
+      product: {
+        ...product,
+        category: { id: product.category_id, title: product.category_name },
+        sub_category: { id: product.subcategory_id, title: product.subcategory_name },
+        images: productImages,
+        variants: finalVariants,
+        group_visibility: groupVis,
+      },
+      categories: allCategories,
+      sub_categories: allSubCategories,
+    });
+
+  } catch (err) {
+    console.error("❌ Error fetching product details:", err);
+    res.status(500).json({ success: false, message: "Internal Server Error" });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
 
 
 //update product
