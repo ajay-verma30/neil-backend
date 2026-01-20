@@ -471,7 +471,7 @@ router.get("/:id", authenticateToken, async (req, res) => {
       FROM orders o
       JOIN addresses sa ON o.shipping_address_id = sa.id
       JOIN addresses ba ON o.billing_address_id = ba.id
-      JOIN user u ON o.user_id = u.id
+      JOIN users u ON o.user_id = u.id
       WHERE o.id = ?
       `,
       [id]
