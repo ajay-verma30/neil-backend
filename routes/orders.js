@@ -456,12 +456,11 @@ router.get("/order-summary", authenticateToken, async (req, res) => {
 });
 
 
-
+//specific order
 router.get("/:id", authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
 
-    // 1. Order + Address + User Details fetch karo
     const [rows] = await promiseConn.query(
       `
       SELECT 
@@ -472,7 +471,7 @@ router.get("/:id", authenticateToken, async (req, res) => {
       FROM orders o
       JOIN addresses sa ON o.shipping_address_id = sa.id
       JOIN addresses ba ON o.billing_address_id = ba.id
-      JOIN users u ON o.user_id = u.id
+      JOIN user u ON o.user_id = u.id
       WHERE o.id = ?
       `,
       [id]
@@ -483,23 +482,12 @@ router.get("/:id", authenticateToken, async (req, res) => {
     }
 
     const order = rows[0];
-
-    // Helper Function to safely parse JSON
-    const parseJsonArray = (jsonValue) => {
-      if (!jsonValue) return [];
-      if (Array.isArray(jsonValue)) return jsonValue;
-      if (typeof jsonValue === 'string') {
-        try {
-          return JSON.parse(jsonValue);
-        } catch (e) {
-          console.warn("JSON Parse Error:", e);
-          return [];
-        }
-      }
-      return [];
+    const parseJsonArray = (val) => {
+      if (!val) return [];
+      if (Array.isArray(val)) return val;
+      try { return JSON.parse(val); } catch (e) { return []; }
     };
 
-    // 2. Cart Items fetch karo (cart_id column se)
     const cartIds = parseJsonArray(order.cart_id);
     let cartItems = [];
     if (cartIds.length > 0) {
@@ -510,12 +498,10 @@ router.get("/:id", authenticateToken, async (req, res) => {
       cartItems = cartData;
     }
 
-    // 3. Customizations fetch karo (customizations_id column se)
     const customizationIds = parseJsonArray(order.customizations_id);
     let customizations = [];
 
     for (let i = 0; i < customizationIds.length; i++) {
-      // Customization + Product Variant details
       const [custRows] = await promiseConn.query(
         `SELECT c.*, pv.color as variant_color, p.title as product_title, p.sku as product_sku
          FROM customizations c
@@ -528,11 +514,14 @@ router.get("/:id", authenticateToken, async (req, res) => {
       if (custRows.length > 0) {
         let customData = custRows[0];
 
-        // Logo Details fetch karo (logo_variant_ids JSON array hai)
+        // LOGO FETCH: Changed l.name to l.title as per your schema
         const logoIds = parseJsonArray(customData.logo_variant_ids);
         if (logoIds.length > 0) {
           const [logos] = await promiseConn.query(
-            "SELECT lv.*, l.name as logo_name FROM logo_variants lv LEFT JOIN logos l ON lv.logo_id = l.id WHERE lv.id IN (?)",
+            `SELECT lv.*, l.title as logo_title 
+             FROM logo_variants lv 
+             LEFT JOIN logos l ON lv.logo_id = l.id 
+             WHERE lv.id IN (?)`,
             [logoIds]
           );
           customData.logos = logos;
@@ -540,7 +529,7 @@ router.get("/:id", authenticateToken, async (req, res) => {
           customData.logos = [];
         }
 
-        // Placement Details fetch karo (placement_ids JSON array hai)
+        // PLACEMENT FETCH: Matches logo_placements table
         const placementIds = parseJsonArray(customData.placement_ids);
         if (placementIds.length > 0) {
           const [placements] = await promiseConn.query(
@@ -556,38 +545,18 @@ router.get("/:id", authenticateToken, async (req, res) => {
       }
     }
 
-    // 4. Final Response
     return res.status(200).json({
       success: true,
       data: {
-        id: order.id,
-        order_batch_id: order.order_batch_id,
-        status: order.status,
-        total_amount: order.total_amount,
-        payment_status: order.payment_status,
-        payment_method: order.payment_method,
-        cartItems: cartItems,
-        customizations: customizations,
-        preview_url: order.preview_url, 
-        shipping_address: order.shipping_address,
-        billing_address: order.billing_address,
-        created_at: order.created_at,
-        updated_at: order.updated_at,
-        customer: {
-          f_name: order.f_name,
-          l_name: order.l_name,
-          email: order.email
-        }
+        ...order,
+        cartItems,
+        customizations
       }
     });
 
   } catch (err) {
-    console.error("Error fetching full order details:", err);
-    res.status(500).json({
-      success: false,
-      message: "Internal server error",
-      error: err.message
-    });
+    console.error("Final Route Error:", err);
+    res.status(500).json({ success: false, message: "Internal server error" });
   }
 });
 
