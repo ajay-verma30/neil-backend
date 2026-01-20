@@ -461,6 +461,7 @@ router.get("/:id", authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
 
+    // 1. Order + Address + User Details fetch karo
     const [rows] = await promiseConn.query(
       `
       SELECT 
@@ -483,60 +484,79 @@ router.get("/:id", authenticateToken, async (req, res) => {
 
     const order = rows[0];
 
-    // JSON Helper
-    const parseJsonArray = (jsonString) => {
-      if (typeof jsonString === 'string') {
-        try { return JSON.parse(jsonString); } catch (e) { return []; }
+    // Helper Function to safely parse JSON
+    const parseJsonArray = (jsonValue) => {
+      if (!jsonValue) return [];
+      if (Array.isArray(jsonValue)) return jsonValue;
+      if (typeof jsonValue === 'string') {
+        try {
+          return JSON.parse(jsonValue);
+        } catch (e) {
+          console.warn("JSON Parse Error:", e);
+          return [];
+        }
       }
-      return Array.isArray(jsonString) ? jsonString : [];
+      return [];
     };
 
-    // 1. Process Cart Items
-    const cartIds = parseJsonArray(order.cart_id); // Pehle parse karo loop se pehle
+    // 2. Cart Items fetch karo (cart_id column se)
+    const cartIds = parseJsonArray(order.cart_id);
     let cartItems = [];
-    
-    for (let i = 0; i < cartIds.length; i++) { // 'let' use karo
-      const [cartData] = await promiseConn.query("SELECT * FROM cart_items where id=?", [cartIds[i]]);
-      if (cartData.length > 0) {
-        cartItems.push(cartData[0]); // res ki jagah cartData use karo
-      }
+    if (cartIds.length > 0) {
+      const [cartData] = await promiseConn.query(
+        "SELECT * FROM cart_items WHERE id IN (?)",
+        [cartIds]
+      );
+      cartItems = cartData;
     }
 
-    // 2. Process Customizations
-    const customizationIds = parseJsonArray(order.customizations_id); // Isko bhi parse karo
+    // 3. Customizations fetch karo (customizations_id column se)
+    const customizationIds = parseJsonArray(order.customizations_id);
     let customizations = [];
 
-    const customizationQuery = `
-        SELECT
-            c.id AS customization_id,
-            c.user_id,
-            c.preview_image_url,
-            pv.id AS variant_id,
-            pv.color AS variant_color,
-            p.title AS product_title,
-            p.sku AS product_sku,
-            lv.id AS logo_variant_id,
-            lv.color AS logo_color,
-            lv.url AS logo_image_url,
-            lp.id AS placement_id,
-            lp.name AS placement_name,
-            lp.view AS placement_view
-        FROM customizations c
-        LEFT JOIN product_variants pv ON c.product_variant_id = pv.id
-        LEFT JOIN products p ON pv.product_id = p.id
-        LEFT JOIN logo_variants lv ON c.logo_variant_id = lv.id
-        LEFT JOIN logo_placements lp ON c.placement_id = lp.id
-        WHERE c.id = ?
-    `;
-
     for (let i = 0; i < customizationIds.length; i++) {
-      const [custres] = await promiseConn.query(customizationQuery, [customizationIds[i]]);
-      if (custres.length > 0) {
-        customizations.push(custres[0]);
+      // Customization + Product Variant details
+      const [custRows] = await promiseConn.query(
+        `SELECT c.*, pv.color as variant_color, p.title as product_title, p.sku as product_sku
+         FROM customizations c
+         LEFT JOIN product_variants pv ON c.product_variant_id = pv.id
+         LEFT JOIN products p ON pv.product_id = p.id
+         WHERE c.id = ?`,
+        [customizationIds[i]]
+      );
+
+      if (custRows.length > 0) {
+        let customData = custRows[0];
+
+        // Logo Details fetch karo (logo_variant_ids JSON array hai)
+        const logoIds = parseJsonArray(customData.logo_variant_ids);
+        if (logoIds.length > 0) {
+          const [logos] = await promiseConn.query(
+            "SELECT lv.*, l.name as logo_name FROM logo_variants lv LEFT JOIN logos l ON lv.logo_id = l.id WHERE lv.id IN (?)",
+            [logoIds]
+          );
+          customData.logos = logos;
+        } else {
+          customData.logos = [];
+        }
+
+        // Placement Details fetch karo (placement_ids JSON array hai)
+        const placementIds = parseJsonArray(customData.placement_ids);
+        if (placementIds.length > 0) {
+          const [placements] = await promiseConn.query(
+            "SELECT * FROM logo_placements WHERE id IN (?)",
+            [placementIds]
+          );
+          customData.placements = placements;
+        } else {
+          customData.placements = [];
+        }
+
+        customizations.push(customData);
       }
     }
 
-    // FINAL RESPONSE
+    // 4. Final Response
     return res.status(200).json({
       success: true,
       data: {
@@ -546,8 +566,6 @@ router.get("/:id", authenticateToken, async (req, res) => {
         total_amount: order.total_amount,
         payment_status: order.payment_status,
         payment_method: order.payment_method,
-        cart_ids: cartIds,
-        customizations_ids: customizationIds,
         cartItems: cartItems,
         customizations: customizations,
         preview_url: order.preview_url, 
@@ -564,8 +582,12 @@ router.get("/:id", authenticateToken, async (req, res) => {
     });
 
   } catch (err) {
-    console.error("Error fetching simple order details:", err);
-    res.status(500).json({ success: false, message: "Internal server error" });
+    console.error("Error fetching full order details:", err);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+      error: err.message
+    });
   }
 });
 
