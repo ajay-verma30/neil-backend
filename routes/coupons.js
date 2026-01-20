@@ -62,6 +62,108 @@ route.post("/new/batch", Authtoken, authorizeRoles("Super Admin", "Admin", "Mana
 });
 
 
+//code redeeming
+// 5. Redeem Coupon & Credit Wallet
+route.post(
+  '/redeem-coupon',
+  Authtoken,
+  authorizeRoles("User"), 
+  async (req, res) => {
+
+    const connection = await promisePool.getConnection();
+
+    try {
+      const { coupon_code } = req.body;
+      const userId = req.user.id;
+
+      if (!coupon_code) {
+        return res.status(400).json({
+          success: false,
+          message: "Coupon code is required"
+        });
+      }
+
+      await connection.beginTransaction();
+
+      // 1️⃣ Coupon lock & validate
+      const [couponRows] = await connection.query(
+        `SELECT * FROM coupons
+         WHERE code = ?
+           AND status = 'ACTIVE'
+         FOR UPDATE`,
+        [coupon_code]
+      );
+
+      if (couponRows.length === 0) {
+        throw new Error("Invalid or already redeemed coupon");
+      }
+
+      const coupon = couponRows[0];
+
+      // 2️⃣ Mark coupon as USED
+      await connection.query(
+        `UPDATE coupons
+         SET status = 'USED',
+             redeemed_by = ?,
+             redeemed_at = NOW()
+         WHERE id = ?`,
+        [userId, coupon.id]
+      );
+
+      // 3️⃣ Ensure wallet exists
+      const [walletRows] = await connection.query(
+        `SELECT id, balance FROM wallets
+         WHERE user_id = ?
+         FOR UPDATE`,
+        [userId]
+      );
+
+      if (walletRows.length === 0) {
+        await connection.query(
+          `INSERT INTO wallets (user_id, balance)
+           VALUES (?, 0.00)`,
+          [userId]
+        );
+      }
+
+      // 4️⃣ Credit wallet
+      await connection.query(
+        `UPDATE wallets
+         SET balance = balance + ?
+         WHERE user_id = ?`,
+        [coupon.amount, userId]
+      );
+
+      // 5️⃣ Wallet transaction entry
+      await connection.query(
+        `INSERT INTO wallet_transactions
+         (user_id, coupon_id, type, amount, description)
+         VALUES (?, ?, 'CREDIT', ?, 'Coupon Redeemed')`,
+        [userId, coupon.id, coupon.amount]
+      );
+
+      await connection.commit();
+
+      return res.status(200).json({
+        success: true,
+        message: "Coupon redeemed successfully",
+        credited_amount: coupon.amount
+      });
+
+    } catch (err) {
+      await connection.rollback();
+      console.error("❌ Redeem coupon error:", err.message);
+
+      return res.status(400).json({
+        success: false,
+        message: err.message
+      });
+
+    } finally {
+      connection.release();
+    }
+  }
+);
 
 
 // 2. Update Status and Generate Coupons
@@ -210,7 +312,7 @@ route.get('/all_coupons/:id', Authtoken, authorizeRoles("Super Admin", "Admin", 
         `;
         const queryParams = [batchId];
 
-        // ✅ Security Check: Super Admin sab dekh sakta hai, baki sirf apni Org ka
+
         if (userRole !== "Super Admin") {
             query += ` AND cb.organizations = ?`;
             queryParams.push(userOrgId);
@@ -228,8 +330,6 @@ route.get('/all_coupons/:id', Authtoken, authorizeRoles("Super Admin", "Admin", 
         connection.release();
     }
 });
-
-
 
 
 module.exports = route;

@@ -461,46 +461,13 @@ router.get("/:id", authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Fetch order + related details (only one query)
     const [rows] = await promiseConn.query(
       `
       SELECT 
-        o.id,
-        o.order_batch_id,
-        o.status,
-        o.total_amount,
-        o.payment_status,
-        o.payment_method,
-        o.cart_id,
-        o.customizations_id,
-        o.preview_url,   -- ✅ Added single representative preview URL
-        o.created_at,
-        o.updated_at,
-
-        -- Shipping address
-        CONCAT_WS(', ',
-          sa.address_line1,
-          sa.address_line2,
-          sa.city,
-          sa.state,
-          sa.postal_code,
-          sa.country
-        ) AS shipping_address,
-
-        -- Billing address
-        CONCAT_WS(', ',
-          ba.address_line1,
-          ba.address_line2,
-          ba.city,
-          ba.state,
-          ba.postal_code,
-          ba.country
-        ) AS billing_address,
-
-        -- User details
-        u.f_name,
-        u.l_name,
-        u.email
+        o.*,
+        CONCAT_WS(', ', sa.address_line1, sa.address_line2, sa.city, sa.state, sa.postal_code, sa.country) AS shipping_address,
+        CONCAT_WS(', ', ba.address_line1, ba.address_line2, ba.city, ba.state, ba.postal_code, ba.country) AS billing_address,
+        u.f_name, u.l_name, u.email
       FROM orders o
       JOIN addresses sa ON o.shipping_address_id = sa.id
       JOIN addresses ba ON o.billing_address_id = ba.id
@@ -510,65 +477,66 @@ router.get("/:id", authenticateToken, async (req, res) => {
       [id]
     );
 
-
     if (rows.length === 0) {
       return res.status(404).json({ success: false, message: "Order not found" });
     }
 
     const order = rows[0];
 
+    // JSON Helper
     const parseJsonArray = (jsonString) => {
       if (typeof jsonString === 'string') {
-        try {
-          return JSON.parse(jsonString);
-        } catch (e) {
-          console.warn("Could not parse JSON string:", e);
-        }
+        try { return JSON.parse(jsonString); } catch (e) { return []; }
       }
-      return jsonString || [];
+      return Array.isArray(jsonString) ? jsonString : [];
     };
 
-    const cartIds = order.cart_id;
+    // 1. Process Cart Items
+    const cartIds = parseJsonArray(order.cart_id); // Pehle parse karo loop se pehle
     let cartItems = [];
-    for (i=0; i<cartIds.length;i++){
-      const [res] = await promiseConn.query("SELECT * FROM cart_items where id=?",[cartIds[i]]);
-      cartItems.push(res)
-    }
     
+    for (let i = 0; i < cartIds.length; i++) { // 'let' use karo
+      const [cartData] = await promiseConn.query("SELECT * FROM cart_items where id=?", [cartIds[i]]);
+      if (cartData.length > 0) {
+        cartItems.push(cartData[0]); // res ki jagah cartData use karo
+      }
+    }
 
-    const customizationIds = order.customizations_id; 
+    // 2. Process Customizations
+    const customizationIds = parseJsonArray(order.customizations_id); // Isko bhi parse karo
     let customizations = [];
-    for (i = 0; i < customizationIds.length; i++) {
-    const query = `
+
+    const customizationQuery = `
         SELECT
             c.id AS customization_id,
             c.user_id,
             c.preview_image_url,
-            -- Product Variant Details
             pv.id AS variant_id,
             pv.color AS variant_color,
             p.title AS product_title,
             p.sku AS product_sku,
-            -- Logo Variant Details
             lv.id AS logo_variant_id,
             lv.color AS logo_color,
             lv.url AS logo_image_url,
-            -- Placement Details
             lp.id AS placement_id,
             lp.name AS placement_name,
             lp.view AS placement_view
-        FROM
-            customizations c
+        FROM customizations c
         LEFT JOIN product_variants pv ON c.product_variant_id = pv.id
         LEFT JOIN products p ON pv.product_id = p.id
         LEFT JOIN logo_variants lv ON c.logo_variant_id = lv.id
         LEFT JOIN logo_placements lp ON c.placement_id = lp.id
-        WHERE
-            c.id = ?
+        WHERE c.id = ?
     `;
-    const [custres] = await promiseConn.query(query, [customizationIds[i]]);
-    customizations.push(custres[0]);
-}
+
+    for (let i = 0; i < customizationIds.length; i++) {
+      const [custres] = await promiseConn.query(customizationQuery, [customizationIds[i]]);
+      if (custres.length > 0) {
+        customizations.push(custres[0]);
+      }
+    }
+
+    // FINAL RESPONSE
     return res.status(200).json({
       success: true,
       data: {
@@ -578,14 +546,11 @@ router.get("/:id", authenticateToken, async (req, res) => {
         total_amount: order.total_amount,
         payment_status: order.payment_status,
         payment_method: order.payment_method,
-        // Convert JSON strings to arrays for the client
-        cart_ids: parseJsonArray(order.cart_id),
-        customizations_ids: parseJsonArray(order.customizations_id),
+        cart_ids: cartIds,
+        customizations_ids: customizationIds,
         cartItems: cartItems,
         customizations: customizations,
-        // Representative preview image (from the first item)
         preview_url: order.preview_url, 
-        
         shipping_address: order.shipping_address,
         billing_address: order.billing_address,
         created_at: order.created_at,
@@ -597,12 +562,10 @@ router.get("/:id", authenticateToken, async (req, res) => {
         }
       }
     });
+
   } catch (err) {
     console.error("Error fetching simple order details:", err);
-    res.status(500).json({
-      success: false,
-      message: "Internal server error"
-    });
+    res.status(500).json({ success: false, message: "Internal server error" });
   }
 });
 

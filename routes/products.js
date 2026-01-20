@@ -200,7 +200,7 @@ route.post(
   }
 );
 
-//get all products
+// get all products
 route.get("/all-products", Authtoken, async (req, res) => {
   const conn = await promisePool.getConnection();
 
@@ -211,10 +211,9 @@ route.get("/all-products", Authtoken, async (req, res) => {
     const where = [];
     const params = [];
     const isSuperAdmin = requester && requester.role === "Super Admin";
-
     if (isSuperAdmin) {
     } else if (requester && requester.org_id) {
-      where.push("(p.org_id IS NULL OR p.org_id = ?)");
+      where.push("p.org_id = ?");
       params.push(requester.org_id);
     } else {
       where.push("p.org_id IS NULL");
@@ -254,7 +253,9 @@ route.get("/all-products", Authtoken, async (req, res) => {
       `,
       params
     );
+
     if (!products.length) return res.status(200).json({ products: [] });
+
     const productIds = products.map((p) => p.id);
     const productPlaceholders = productIds.map(() => "?").join(",");
     const [variants] = await conn.query(
@@ -263,16 +264,14 @@ route.get("/all-products", Authtoken, async (req, res) => {
     );
     const variantIds = variants.map((v) => v.id);
     let variantImages = [];
+    let sizeAttributes = [];
+
     if (variantIds.length) {
       const variantPlaceholders = variantIds.map(() => "?").join(",");
       [variantImages] = await conn.query(
         `SELECT variant_id, url, type FROM variant_images WHERE variant_id IN (${variantPlaceholders})`,
         variantIds
       );
-    }
-    let sizeAttributes = [];
-    if (variantIds.length) {
-      const variantPlaceholders = variantIds.map(() => "?").join(",");
       [sizeAttributes] = await conn.query(
         `SELECT variant_id, size AS name, price_adjustment AS adjustment, stock_quantity AS stock
          FROM variant_size_attributes
@@ -285,6 +284,7 @@ route.get("/all-products", Authtoken, async (req, res) => {
       images: variantImages.filter((img) => img.variant_id === v.id),
       attributes: sizeAttributes.filter((attr) => attr.variant_id === v.id),
     }));
+
     const result = products.map((p) => ({
       ...p,
       category: p.category_title || "Uncategorized",
@@ -293,11 +293,10 @@ route.get("/all-products", Authtoken, async (req, res) => {
     }));
 
     res.status(200).json({ products: result });
+
   } catch (e) {
     console.error("❌ Error fetching products:", e);
-    res
-      .status(500)
-      .json({ message: "Internal Server Error", error: e.message });
+    res.status(500).json({ message: "Internal Server Error", error: e.message });
   } finally {
     if (conn) conn.release();
   }
@@ -753,7 +752,6 @@ route.get("/public/:id", optionalAuth, async (req, res) => {
     const isSuperAdmin = user?.role === "Super Admin";
     const orgId = user?.org_id || null;
 
-    // 1️⃣ Fetch Product (As is)
     let productQuery = `
       SELECT 
         p.*, 
@@ -781,14 +779,11 @@ route.get("/public/:id", optionalAuth, async (req, res) => {
 
     const product = productRows[0];
 
-    // 2, 3, 4, 5 (Categories, Images, Variants, GroupVis) - Yeh same rahenge
     const [allCategories] = await conn.query("SELECT id, title FROM categories ORDER BY title ASC");
     const [allSubCategories] = await conn.query("SELECT id, title, category_id FROM sub_categories ORDER BY title ASC");
     const [productImages] = await conn.query("SELECT id, product_id, url FROM product_images WHERE product_id = ?", [id]);
     const [variants] = await conn.query("SELECT id, product_id, color, sku, price FROM product_variants WHERE product_id = ?", [id]);
     const [groupVis] = await conn.query("SELECT group_id, is_visible FROM group_product_visibility WHERE product_id = ?", [id]);
-
-    // 6️⃣ Fetch variant details: images, size attributes, logo placements (UPDATED)
     let finalVariants = [];
 
     if (variants.length > 0) {
@@ -843,7 +838,6 @@ route.get("/public/:id", optionalAuth, async (req, res) => {
       });
     }
 
-    // 7️⃣ Respond (Same)
     res.status(200).json({
       success: true,
       product: {
@@ -1129,7 +1123,6 @@ route.patch(
   }
 );
 
-/* -------------------------------------------------------------------------- */
 /* ✅ DELETE PRODUCT */
 route.delete("/:id", Authtoken, async (req, res) => {
   const conn = await promisePool.getConnection();
