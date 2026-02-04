@@ -19,33 +19,43 @@ const authorizeRoles = (...allowedRoles) => (req, res, next) => {
 // 1. Create New Batch
 route.post("/new/batch", Authtoken, authorizeRoles("Super Admin", "Admin", "Manager"), async (req, res) => {
     try {
+        const requester = req.user;
         const {
-            admin_id,
             title,
             coupon_amount,
             number_of_coupons,
             total_amount,
-            organizations,
+            organizations, 
             group_id, 
             payment_status
         } = req.body;
 
-        if (!admin_id || !title || !coupon_amount || !number_of_coupons || !total_amount || !organizations) {
+        if (!title || !coupon_amount || !number_of_coupons || !total_amount) {
             return res.status(400).json({ message: "Field Missing Value" });
         }
-
+        const targetOrg = requester.role === "Super Admin" ? organizations : requester.org_id;        
+        if (!targetOrg) return res.status(400).json({ message: "Organization ID is required" });
+        if (group_id) {
+            const [groupCheck] = await promisePool.query(
+                "SELECT id FROM groups WHERE id = ? AND org_id = ?",
+                [group_id, targetOrg]
+            );
+            if (groupCheck.length === 0) {
+                return res.status(403).json({ message: "Invalid Group: Group does not belong to this organization" });
+            }
+        }
         const [result] = await promisePool.query(
             `INSERT INTO coupon_batches 
             (admin_id, title, coupon_amount, number_of_coupons, total_amount, payment_status, organizations, group_id) 
             VALUES (?,?,?,?,?,?,?,?)`, 
             [
-                admin_id, 
+                requester.id,
                 title, 
                 coupon_amount, 
                 number_of_coupons, 
                 total_amount, 
                 payment_status || 'PENDING', 
-                organizations, 
+                targetOrg, 
                 group_id || null 
             ]
         );
@@ -171,7 +181,22 @@ route.patch("/update-status", Authtoken, authorizeRoles("Super Admin", "Admin", 
     const connection = await promisePool.getConnection();
     try {
         const { batchId, status } = req.body;
+        const requester = req.user;
+
         await connection.beginTransaction();
+
+        // Security: Check if requester has access to this batch
+        const [batchCheck] = await connection.query(
+            "SELECT organizations FROM coupon_batches WHERE id = ?",
+            [batchId]
+        );
+
+        if (batchCheck.length === 0) return res.status(404).json({ message: "Batch not found" });
+
+        if (requester.role !== "Super Admin" && batchCheck[0].organizations !== requester.org_id) {
+            return res.status(403).json({ message: "Access Denied: You cannot update status of another organization's batch" });
+        }
+
         await connection.query(
             "UPDATE coupon_batches SET payment_status = ? WHERE id = ?",
             [status, batchId]
@@ -196,10 +221,11 @@ route.patch("/update-status", Authtoken, authorizeRoles("Super Admin", "Admin", 
                     await connection.query(
                         `INSERT INTO coupons (batch_id, code, title, amount, status, created_by) 
                          VALUES (?, ?, ?, ?, 'ACTIVE', ?)`,
-                        [batchId, formattedCode, title, coupon_amount, admin_id]
+                        [batchId, formattedCode, title, coupon_amount, requester.id]
                     );
                     generatedCoupons.push(formattedCode);
                 }
+
                 let usersToNotify = [];
                 if (group_id) {
                     const [rows] = await connection.query(
@@ -216,6 +242,7 @@ route.patch("/update-status", Authtoken, authorizeRoles("Super Admin", "Admin", 
                     );
                     usersToNotify = rows;
                 }
+
                 usersToNotify.forEach((user, index) => {
                     const userCoupon = generatedCoupons[index] || "Check Dashboard"; 
                     

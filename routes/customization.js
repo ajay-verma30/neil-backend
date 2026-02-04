@@ -67,10 +67,6 @@ route.post("/new", Authtoken, upload.single("preview"), async (req, res) => {
     if (!user_id) {
       return res.status(400).json({ message: "⚠️ User ID is required." });
     }
-
-    // =====================
-    // Parse JSON safely
-    // =====================
     const parseJSON = (input) => {
       if (!input) return null;
       try {
@@ -83,20 +79,12 @@ route.post("/new", Authtoken, upload.single("preview"), async (req, res) => {
     product_variant_id = parseJSON(product_variant_id);
     logo_variant_ids = parseJSON(logo_variant_ids);
     placement_ids = parseJSON(placement_ids);
-
-    // =====================
-    // Handle preview image
-    // =====================
     let previewUrl = null;
     if (req.file && req.file.buffer) {
       previewUrl = await uploadToCloudinary(req.file.buffer, "customizations/previews");
     }
 
     const id = nanoid(10);
-
-    // =====================
-    // Insert into DB
-    // =====================
     const sql = `
       INSERT INTO customizations 
       (id, user_id, product_variant_id, logo_variant_ids, placement_ids, preview_image_url)

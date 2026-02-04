@@ -552,6 +552,7 @@ route.get("/:id", Authtoken, async (req, res) => {
     const [logos] = await promiseConn.query(
       "SELECT id, title, org_id, created_at FROM logos WHERE id = ?",
       [id]
+      
     );
 
     if (logos.length === 0) {
